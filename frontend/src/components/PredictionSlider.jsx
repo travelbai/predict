@@ -49,7 +49,7 @@ export default function PredictionSlider({ value, onChange, label }) {
           <button
             onClick={() => onChange(0)}
             className="sbtn"
-            style={{ fontSize: 10, padding: "0 10px", letterSpacing: 0.5, fontWeight: 600 }}
+            style={{ width: "auto", fontSize: 10, padding: "0 12px", letterSpacing: 0.5, fontWeight: 600 }}
           >
             RESET
           </button>
