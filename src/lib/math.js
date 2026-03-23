@@ -226,6 +226,36 @@ export function computeAccuracy(beta0Old, beta1Old, xActual, yActual) {
   return Math.max(0, Math.min(1, 1 - mape));
 }
 
+// ── Adaptive window ───────────────────────────────────────────────────────────
+
+/**
+ * Adjust regression window based on recent MAPE trend.
+ *
+ * Rules (require ≥5 entries in mapeHistory):
+ *   - All 5 strictly increasing → shrink by 20%
+ *   - All 5 below MAPE_LOW (0.15)  → grow by 10%
+ *   - Otherwise → unchanged
+ *
+ * @param {number[]|undefined} mapeHistory  recent MAPE values, oldest first
+ * @param {number} currentWindow  current window in days
+ * @param {number} min  minimum window (days)
+ * @param {number} max  maximum window (days)
+ * @returns {number}  new window in days (integer)
+ */
+export function adaptiveWindow(mapeHistory, currentWindow, min, max) {
+  if (!mapeHistory || mapeHistory.length < 5) return currentWindow;
+  const recent = mapeHistory.slice(-5);
+
+  const isRising = recent.every((v, i) => i === 0 || v > recent[i - 1]);
+  if (isRising) return Math.max(min, Math.round(currentWindow * 0.8));
+
+  const MAPE_LOW = 0.15;
+  const isStable = recent.every(v => v < MAPE_LOW);
+  if (isStable) return Math.min(max, Math.round(currentWindow * 1.1));
+
+  return currentWindow;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function mean(arr) {

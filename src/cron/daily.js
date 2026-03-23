@@ -15,11 +15,16 @@ import {
   percentileRange,
   computeAccuracy,
   zeroVolumeRatio,
+  adaptiveWindow,
 } from "../lib/math.js";
 
 const BTC_TAO_WEEKS = 52;
-const SUBNET_HISTORY_LIMIT = 180;
-const D1_WINDOW = 90;
+// TAO daily fetch must cover the max d1 window + 1 price point for returns
+const TAO_DAILY_FETCH = 185;
+
+// Adaptive window bounds (days)
+const D1_MIN = 30, D1_MAX = 180, D1_DEFAULT = 90;
+const W1_MIN = 90, W1_MAX = 360, W1_DEFAULT = 180;
 
 export async function runDailyCron(state, env) {
   console.log("[daily] === starting daily regression run ===");
@@ -31,7 +36,7 @@ export async function runDailyCron(state, env) {
   const [btcWeekly, taoWeekly, taoDaily] = await Promise.all([
     fetchBinanceKlines("BTCUSDT", "1w", BTC_TAO_WEEKS),
     fetchBinanceKlines("TAOUSDT", "1w", BTC_TAO_WEEKS),
-    fetchBinanceKlines("TAOUSDT", "1d", SUBNET_HISTORY_LIMIT),
+    fetchBinanceKlines("TAOUSDT", "1d", TAO_DAILY_FETCH),
   ]);
 
   const { x: btcPrices, y: taoPrices } = alignByTimestamp(btcWeekly, taoWeekly);
@@ -89,7 +94,14 @@ export async function runDailyCron(state, env) {
 
   for (const subnet of subnets) {
     try {
-      const history = await fetchSubnetHistory(subnet.id, SUBNET_HISTORY_LIMIT, env);
+      const prev = subnetMap[subnet.id];
+
+      // Compute adaptive windows before fetching (needs prev mapeHistory)
+      const d1Win = adaptiveWindow(prev?.d1?.mapeHistory, prev?.d1?.windowDays ?? D1_DEFAULT, D1_MIN, D1_MAX);
+      const w1Win = adaptiveWindow(prev?.w1?.mapeHistory, prev?.w1?.windowDays ?? W1_DEFAULT, W1_MIN, W1_MAX);
+      const fetchDays = Math.min(Math.max(d1Win, w1Win) + 5, W1_MAX + 5);
+
+      const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
 
       const days = historyDays(history);
       if (days < MIN_HISTORY_DAYS) {
@@ -106,9 +118,9 @@ export async function runDailyCron(state, env) {
       // TVL in USD
       const tvlUsd = subnet.tvlTao * taoUsdPrice;
 
-      // ── d1 regression: last 90 daily candles ──────────────────────────
-      const recent90 = history.slice(-D1_WINDOW);
-      const subnetTaoReturns_d1 = logReturns(recent90.map(k => k.price));
+      // ── d1 regression: last d1Win daily candles ────────────────────────
+      const recentD1 = history.slice(-d1Win);
+      const subnetTaoReturns_d1 = logReturns(recentD1.map(k => k.price));
       const taoSlice_d1 = taoDailyReturns.slice(-subnetTaoReturns_d1.length);
       // Convert subnet returns TAO→USDT via log-return additivity
       const subnetUsdtReturns_d1 = subnetTaoReturns_d1.map((r, i) =>
@@ -116,8 +128,9 @@ export async function runDailyCron(state, env) {
       );
       const d1 = linearRegressionPipeline(taoSlice_d1, subnetUsdtReturns_d1);
 
-      // ── w1 regression: weekly aggregation of 180 days ─────────────────
-      const weekly = aggregateToWeekly(history);
+      // ── w1 regression: last w1Win days aggregated to weekly ────────────
+      const recentW1 = history.slice(-w1Win);
+      const weekly = aggregateToWeekly(recentW1);
       const subnetTaoReturns_w1 = logReturns(weekly.map(k => k.price));
       const taoSlice_w1 = taoWeeklyReturns.slice(-subnetTaoReturns_w1.length);
       const subnetUsdtReturns_w1 = subnetTaoReturns_w1.map((r, i) =>
@@ -126,7 +139,6 @@ export async function runDailyCron(state, env) {
       const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
 
       // Accuracy vs previous model
-      const prev = subnetMap[subnet.id];
       let d1Acc = null, w1Acc = null;
       let d1Mape = prev?.d1?.mapeHistory ?? [];
       let w1Mape = prev?.w1?.mapeHistory ?? [];
@@ -160,14 +172,14 @@ export async function runDailyCron(state, env) {
         // Preserve h4 from the 4H cron; daily cron only updates d1 + w1
         h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: 30 },
         d1: d1
-          ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: D1_WINDOW }
+          ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: d1Win }
           : (prev?.d1 ?? null),
         w1: w1
-          ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: 180 }
+          ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: w1Win }
           : (prev?.w1 ?? null),
       };
 
-      console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1 R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1 R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
+      console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
     } catch (err) {
       console.error(`[daily] SN${subnet.id} failed: ${err.message}`);
     }

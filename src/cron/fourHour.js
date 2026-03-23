@@ -16,12 +16,13 @@ import {
   percentileRange,
   computeAccuracy,
   zeroVolumeRatio,
+  adaptiveWindow,
 } from "../lib/math.js";
 
-// 180 4H bars = 30 days; fetch a few extra for IQR headroom
-const H4_BARS = 180;
-const SUBNET_DAILY_LIMIT = 35;
-const H4_WINDOW_DAYS = 30;
+const H4_BARS = 180; // 180 4H bars = 30 days of TAO data
+
+// Adaptive window bounds (days)
+const H4_MIN = 15, H4_MAX = 60, H4_DEFAULT = 30;
 
 export async function runFourHourCron(state, env) {
   console.log("[4h] === starting 4H regression run ===");
@@ -46,7 +47,13 @@ export async function runFourHourCron(state, env) {
 
   for (const subnet of subnets) {
     try {
-      const history = await fetchSubnetHistory(subnet.id, SUBNET_DAILY_LIMIT, env);
+      const prev = subnetMap[subnet.id];
+
+      // Compute adaptive window before fetching
+      const h4Win = adaptiveWindow(prev?.h4?.mapeHistory, prev?.h4?.windowDays ?? H4_DEFAULT, H4_MIN, H4_MAX);
+      const fetchDays = h4Win + 5; // +5 headroom for IQR filter
+
+      const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
 
       if (historyDays(history) < MIN_HISTORY_DAYS) continue;
 
@@ -56,8 +63,9 @@ export async function runFourHourCron(state, env) {
         continue;
       }
 
-      // Convert subnet TAO-priced returns → USDT via log-return additivity
-      const subnetTaoReturns = logReturns(history.map(k => k.price));
+      // Slice to the adaptive window, then convert TAO-priced returns → USDT
+      const recentH4 = history.slice(-h4Win);
+      const subnetTaoReturns = logReturns(recentH4.map(k => k.price));
       const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
       const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
         r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
@@ -66,7 +74,6 @@ export async function runFourHourCron(state, env) {
       const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
       // Accuracy vs previous h4 model
-      const prev = subnetMap[subnet.id];
       let h4Acc = null;
       let h4Mape = prev?.h4?.mapeHistory ?? [];
 
@@ -82,13 +89,13 @@ export async function runFourHourCron(state, env) {
       if (h4) allAlphas.push(h4.beta0);
 
       const h4State = h4
-        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: H4_WINDOW_DAYS }
-        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_WINDOW_DAYS });
+        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: h4Win }
+        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
 
       const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
 
-      if (subnetMap[subnet.id]) {
-        subnetMap[subnet.id] = { ...subnetMap[subnet.id], tvl: tvlUsd, h4: h4State };
+      if (prev) {
+        subnetMap[subnet.id] = { ...prev, tvl: tvlUsd, h4: h4State };
       } else {
         subnetMap[subnet.id] = {
           id: subnet.id,
@@ -102,7 +109,7 @@ export async function runFourHourCron(state, env) {
         };
       }
 
-      console.log(`[4h] SN${subnet.id} ${subnet.symbol} R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
+      console.log(`[4h] SN${subnet.id} ${subnet.symbol} win=${h4Win}d R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
     } catch (err) {
       console.error(`[4h] SN${subnet.id} failed: ${err.message}`);
     }
