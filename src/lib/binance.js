@@ -5,7 +5,8 @@
  * Docs: https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data
  */
 
-const BASE = "https://api.binance.com";
+// data-api.binance.vision is the globally-accessible mirror of api.binance.com
+const BASE = "https://data-api.binance.vision";
 
 // Retry delays in ms (1min, 5min, 15min)
 const RETRY_DELAYS = [60_000, 300_000, 900_000];
