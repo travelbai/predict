@@ -1,0 +1,207 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --sans: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'DM Mono', 'SF Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--sans);
+  background: #ffffff;
+  color: #121212;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Shared component styles ─────────────────────────────── */
+
+.card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 12px;
+  padding: 22px 24px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #121212;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: #929292;
+}
+
+.label {
+  font-size: 11px;
+  color: #929292;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.metric-card {
+  background: #fafafa;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+/* ── Table ───────────────────────────────────────────────── */
+
+.td {
+  padding: 12px 14px;
+  vertical-align: middle;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+
+.tc {
+  text-align: center;
+}
+
+.trow {
+  transition: background 0.1s;
+}
+
+.trow:hover {
+  background: #fafafa !important;
+}
+
+/* ── Slider buttons ──────────────────────────────────────── */
+
+.sbtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+  background: #fff;
+  color: #616161;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sbtn:hover {
+  background: #fafafa;
+}
+
+.sinput {
+  width: 72px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+  background: #fff;
+  color: #121212;
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  font-family: var(--mono);
+}
+
+/* ── Period buttons ──────────────────────────────────────── */
+
+.pbtn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  background: #fff;
+  color: #929292;
+  transition: all 0.15s;
+}
+
+.pbtn[data-active="true"] {
+  background: #00B07C0C;
+  color: #00B07C;
+  border-color: #00B07C40;
+}
+
+.pbtn:hover {
+  background: #fafafa;
+}
+
+/* ── Range slider ────────────────────────────────────────── */
+
+.slider {
+  width: 100%;
+  margin-top: -4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 20px;
+  outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #00B07C;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  margin-top: -6px;
+}
+
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #00B07C;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 0;
+}
+
+.slider::-moz-range-track {
+  height: 0;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  height: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ddd;
+  border-radius: 2px;
+}
+
+/* ── Stale banner ────────────────────────────────────────── */
+
+.stale-banner {
+  background: #FFF8E1;
+  border: 1px solid #F0B90B40;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #8a6900;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

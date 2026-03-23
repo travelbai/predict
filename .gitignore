@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.local
+*.local
+
+frontend/node_modules/
+frontend/dist/

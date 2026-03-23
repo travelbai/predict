@@ -1,0 +1,16 @@
+export const C = {
+  bg: "#ffffff",
+  card: "#ffffff",
+  border: "#f0f0f0",
+  text: "#121212",
+  t2: "#616161",
+  t3: "#929292",
+  green: "#00B07C",
+  red: "#F23F5D",
+  yellow: "#F0B90B",
+  gray: "#B0B0B0",
+  greenBg: "#00B07C0C",
+  redBg: "#F23F5D0C",
+  hover: "#fafafa",
+  btc: "#F7931A",
+};
