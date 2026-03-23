@@ -1,84 +1,53 @@
 /**
- * Cron scheduler — dispatches to the correct handler based on cron expression.
+ * Cron dispatcher.
  *
- * "0 0 * * *"   → dailyCron  (Cron 1: BTC/TAO macro + subnet 24H & 1W)
- * "0 */4 * * *" → hourlyCron (Cron 2: subnet 4H)
- *
- * Full implementation is a P0 task; stubs are here so the Worker deploys cleanly.
+ * "0 0 * * *"   → Cron 1: BTC/TAO macro + subnet 24H & 1W regression
+ * "0 */4 * * *" → Cron 2: subnet 4H regression
  */
 
+import { runDailyCron } from "./daily.js";
+import { runFourHourCron } from "./fourHour.js";
+import { MOCK_STATE } from "../mock/dashboardState.js";
+
 export async function handleScheduled(cron, env) {
-  console.log(`[scheduler] cron triggered: ${cron}`);
-
-  if (cron === "0 0 * * *") {
-    await dailyCron(env);
-  } else if (cron === "0 */4 * * *") {
-    await hourlyCron(env);
-  } else {
-    console.warn(`[scheduler] unknown cron: ${cron}`);
-  }
-}
-
-// ── Cron 1: Daily 00:00 UTC ───────────────────────────────────────────────────
-async function dailyCron(env) {
-  console.log("[cron1] starting daily regression run");
+  console.log(`[scheduler] triggered: ${cron}`);
 
   let state = await loadState(env);
 
   try {
-    // TODO (P0): implement full pipeline
-    // 1. Fetch BTC/USDT 1W (52 bars) + TAO/USDT 1W (52 bars) + TAO/USDT 1D (180 bars) from Binance
-    // 2. Align by close-timestamp, compute log returns, IQR filter, OLS regression → btcTao
-    // 3. Fetch each subnet 1D (180 bars) from Taostats; compute 24H + 1W regressions
-    // 4. Write merged state to KV
-    console.log("[cron1] stub — full implementation pending");
+    if (cron === "0 0 * * *") {
+      await runDailyCron(state, env);
+    } else if (cron === "0 */4 * * *") {
+      await runFourHourCron(state, env);
+    } else {
+      console.warn(`[scheduler] unknown cron expression: ${cron}`);
+      return;
+    }
 
     state.status = "ok";
     state.staleReason = null;
     state.updatedAt = new Date().toISOString();
+    state.version = 1;
   } catch (err) {
-    console.error("[cron1] failed:", err.message);
+    console.error(`[scheduler] run failed — preserving stale snapshot: ${err.message}`);
     state.status = "stale";
     state.staleReason = err.message;
-  }
-
-  await saveState(env, state);
-}
-
-// ── Cron 2: Every 4 hours ─────────────────────────────────────────────────────
-async function hourlyCron(env) {
-  console.log("[cron2] starting 4H regression run");
-
-  let state = await loadState(env);
-
-  try {
-    // TODO (P0): implement full pipeline
-    // 1. Fetch TAO/USDT 4H (180 bars) from Binance
-    // 2. Fetch each subnet 4H bars from Taostats
-    // 3. Compute 4H regressions; update h4 fields in state.subnets
-    // 4. Write merged state to KV
-    console.log("[cron2] stub — full implementation pending");
-
-    state.status = "ok";
-    state.staleReason = null;
-    state.updatedAt = new Date().toISOString();
-  } catch (err) {
-    console.error("[cron2] failed:", err.message);
-    state.status = "stale";
-    state.staleReason = err.message;
+    // Do NOT update state.updatedAt — keep the timestamp of the last good run
   }
 
   await saveState(env, state);
 }
 
 // ── KV helpers ────────────────────────────────────────────────────────────────
+
 async function loadState(env) {
-  const raw = await env.KV.get("dashboard_state");
-  if (!raw) {
-    const { MOCK_STATE } = await import("../mock/dashboardState.js");
-    return structuredClone(MOCK_STATE);
+  try {
+    const raw = await env.KV.get("dashboard_state");
+    if (raw) return JSON.parse(raw);
+  } catch (err) {
+    console.warn(`[scheduler] failed to load existing state: ${err.message}`);
   }
-  return JSON.parse(raw);
+  return structuredClone(MOCK_STATE);
 }
 
 async function saveState(env, state) {
