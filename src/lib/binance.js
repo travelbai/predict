@@ -1,22 +1,22 @@
-/**
- * Binance Public API client.
- * No API key required — klines endpoint is public.
- *
- * Docs: https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data
- */
+// Binance Public API client — no API key required.
+// Docs: https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data
+//
+// BASE URL priority:
+//   1. BINANCE_BASE_URL env var (set in seed script to use mirror when api.binance.com is blocked)
+//   2. https://api.binance.com  (default — always used in the deployed Worker)
 
-// data-api.binance.vision is the globally-accessible mirror of api.binance.com
-const BASE = "https://data-api.binance.vision";
+const BASE =
+  (typeof process !== "undefined" && process.env?.BINANCE_BASE_URL) ||
+  "https://api.binance.com";
 
-// Retry delays in ms (1min, 5min, 15min)
 const RETRY_DELAYS = [60_000, 300_000, 900_000];
 
 /**
  * Fetch klines from Binance.
  *
- * @param {string} symbol  e.g. "BTCUSDT"
+ * @param {string} symbol   e.g. "BTCUSDT"
  * @param {string} interval e.g. "1w" | "1d" | "4h"
- * @param {number} limit   number of candles (max 1000)
+ * @param {number} limit    number of candles (max 1000)
  * @returns {{ time: number, price: number, volume: number }[]}
  */
 export async function fetchBinanceKlines(symbol, interval, limit) {
@@ -31,13 +31,12 @@ export async function fetchBinanceKlines(symbol, interval, limit) {
   }));
 }
 
-// ── Retry logic ───────────────────────────────────────────────────────────────
-
 async function fetchWithRetry(url, attempt = 0) {
   try {
     const res = await fetch(url, {
       headers: { "Accept": "application/json" },
-      cf: { cacheTtl: 60 }, // Cloudflare edge cache 1 min
+      // Cloudflare edge cache — ignored outside Workers
+      cf: { cacheTtl: 60 },
     });
 
     if (!res.ok) {

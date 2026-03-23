@@ -182,6 +182,27 @@ export function aggregateToWeekly(daily) {
   return weeks;
 }
 
+// ── 4H → Daily aggregation ───────────────────────────────────────────────────
+
+/**
+ * Aggregate 4H klines to daily by grouping candles into UTC calendar days
+ * and taking the last close price of each day.
+ *
+ * Binance 4H bars use closeTime (k[6]) as the `time` field.
+ * We assign each bar to the UTC date of its close timestamp.
+ *
+ * @param {{ time: number, price: number }[]} klines4h  chronological
+ * @returns {{ time: number, price: number }[]}  one entry per calendar day
+ */
+export function aggregateToDaily(klines4h) {
+  const byDay = new Map(); // "YYYY-MM-DD" → { time, price }
+  for (const k of klines4h) {
+    const day = new Date(k.time).toISOString().slice(0, 10);
+    byDay.set(day, k); // later bars overwrite earlier ones → last close of day
+  }
+  return [...byDay.values()].sort((a, b) => a.time - b.time);
+}
+
 // ── Alpha range calibration ───────────────────────────────────────────────────
 
 /**

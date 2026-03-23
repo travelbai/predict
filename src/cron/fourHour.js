@@ -1,47 +1,57 @@
 // Cron 2 — Every 4 hours (6x/day)
 //
-// h4 regression: TAO → Subnet using last 30 days of daily candles.
-// Taostats does not provide sub-daily history, so daily data is used
-// for all three time windows. h4 reflects the shortest (30d) window.
+// h4 regression: TAO → Subnet using 30-day window.
+// TAO data source : Binance TAO/USDT 4H (180 bars = 30 days × 6 bars/day)
+//                   aggregated to daily (last 4H close per UTC day)
+// Subnet data     : Taostats daily history (last 35 days, sliced to match TAO)
+//
+// Both series aligned to daily frequency before regression so frequencies match.
 
 import { fetchBinanceKlines } from "../lib/binance.js";
 import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS } from "../lib/taostats.js";
 import {
   logReturns,
+  aggregateToDaily,
   linearRegressionPipeline,
   percentileRange,
   computeAccuracy,
 } from "../lib/math.js";
 
-const H4_WINDOW = 30; // days
-const H4_FETCH_LIMIT = 35; // a few extra for IQR headroom
+// 180 4H bars = 30 days; fetch a few extra for IQR headroom
+const H4_BARS = 180;
+const SUBNET_DAILY_LIMIT = 35;
+const H4_WINDOW_DAYS = 30;
 
 export async function runFourHourCron(state, env) {
-  console.log("[4h] === starting 4H (30d daily) regression run ===");
-  const now = new Date().toISOString();
+  console.log("[4h] === starting 4H regression run ===");
 
-  // TAO daily returns from Binance (last 35 days)
-  console.log("[4h] fetching TAO/USDT daily klines from Binance");
-  const taoKlines = await fetchBinanceKlines("TAOUSDT", "1d", H4_FETCH_LIMIT);
-  const taoReturns = logReturns(taoKlines.map(k => k.price));
+  // ── Fetch TAO/USDT 4H from Binance ───────────────────────────────────────
+  console.log("[4h] fetching TAO/USDT 4H klines (180 bars)");
+  const tao4h = await fetchBinanceKlines("TAOUSDT", "4h", H4_BARS);
 
-  const taoUsdPrice = taoKlines[taoKlines.length - 1]?.price ?? 0;
+  // Aggregate 4H → daily (last 4H close per UTC day)
+  const taoDaily = aggregateToDaily(tao4h);
+  const taoReturns = logReturns(taoDaily.map(k => k.price));
 
+  // Latest TAO/USD price for TVL calculation
+  const taoUsdPrice = tao4h[tao4h.length - 1]?.price ?? 0;
+
+  // ── Subnets ───────────────────────────────────────────────────────────────
   const subnets = await fetchEligibleSubnets(env);
-  console.log(`[4h] ${subnets.length} subnets to process`);
+  console.log(`[4h] ${subnets.length} subnets`);
 
   const subnetMap = Object.fromEntries((state.subnets ?? []).map(s => [s.id, s]));
   const allAlphas = [];
 
   for (const subnet of subnets) {
     try {
-      const history = await fetchSubnetHistory(subnet.id, H4_FETCH_LIMIT, env);
+      const history = await fetchSubnetHistory(subnet.id, SUBNET_DAILY_LIMIT, env);
 
       if (historyDays(history) < MIN_HISTORY_DAYS) continue;
 
+      // Convert subnet TAO-priced returns → USDT via log-return additivity
       const subnetTaoReturns = logReturns(history.map(k => k.price));
       const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
-      // Convert TAO-priced subnet returns → USDT
       const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
         r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
       );
@@ -65,23 +75,19 @@ export async function runFourHourCron(state, env) {
       if (h4) allAlphas.push(h4.beta0);
 
       const h4State = h4
-        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: H4_WINDOW }
-        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_WINDOW });
+        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: H4_WINDOW_DAYS }
+        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_WINDOW_DAYS });
 
-      const tvlUsd = subnet.tvlTao * taoUsdPrice;
+      const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
 
       if (subnetMap[subnet.id]) {
-        subnetMap[subnet.id] = {
-          ...subnetMap[subnet.id],
-          tvl: Math.round(tvlUsd),
-          h4: h4State,
-        };
+        subnetMap[subnet.id] = { ...subnetMap[subnet.id], tvl: tvlUsd, h4: h4State };
       } else {
         subnetMap[subnet.id] = {
           id: subnet.id,
           symbol: subnet.symbol,
           name: subnet.name,
-          tvl: Math.round(tvlUsd),
+          tvl: tvlUsd,
           regDays: historyDays(history),
           h4: h4State,
           d1: null,

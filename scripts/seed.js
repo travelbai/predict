@@ -9,6 +9,10 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
+// api.binance.com may be blocked in some regions; fall back to the global mirror.
+// The deployed Worker always uses api.binance.com directly (no env override needed).
+process.env.BINANCE_BASE_URL = "https://data-api.binance.vision";
+
 const [,, CF_TOKEN, ACCOUNT_ID, TAOSTATS_KEY, kvIdArg] = process.argv;
 
 if (!CF_TOKEN || !ACCOUNT_ID || !TAOSTATS_KEY) {
