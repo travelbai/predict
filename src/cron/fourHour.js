@@ -1,14 +1,11 @@
-/**
- * Cron 2 — Every 4 hours (6×/day)
- *
- * Computes TAO → Subnet 4H regression for all eligible subnets.
- * Updates only the h4 field in state; leaves d1 + w1 untouched.
- *
- * Window: 30 days × 6 bars/day = 180 4H candles
- */
+// Cron 2 — Every 4 hours (6x/day)
+//
+// h4 regression: TAO → Subnet using last 30 days of daily candles.
+// Taostats does not provide sub-daily history, so daily data is used
+// for all three time windows. h4 reflects the shortest (30d) window.
 
 import { fetchBinanceKlines } from "../lib/binance.js";
-import { fetchEligibleSubnets, fetchSubnetKlines, isTooThinlyTraded } from "../lib/taostats.js";
+import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS } from "../lib/taostats.js";
 import {
   logReturns,
   linearRegressionPipeline,
@@ -16,20 +13,20 @@ import {
   computeAccuracy,
 } from "../lib/math.js";
 
-// 30 days × 6 bars/day
-const H4_LIMIT = 180;
-const H4_WINDOW_DAYS = 30;
+const H4_WINDOW = 30; // days
+const H4_FETCH_LIMIT = 35; // a few extra for IQR headroom
 
 export async function runFourHourCron(state, env) {
-  console.log("[4h] === starting 4H regression run ===");
+  console.log("[4h] === starting 4H (30d daily) regression run ===");
   const now = new Date().toISOString();
 
-  // ── Fetch TAO 4H klines from Binance ─────────────────────────────────────
-  console.log("[4h] fetching TAO/USDT 4H klines");
-  const tao4hKlines = await fetchBinanceKlines("TAOUSDT", "4h", H4_LIMIT);
-  const taoReturns = logReturns(tao4hKlines.map(k => k.price));
+  // TAO daily returns from Binance (last 35 days)
+  console.log("[4h] fetching TAO/USDT daily klines from Binance");
+  const taoKlines = await fetchBinanceKlines("TAOUSDT", "1d", H4_FETCH_LIMIT);
+  const taoReturns = logReturns(taoKlines.map(k => k.price));
 
-  // ── Fetch eligible subnets ────────────────────────────────────────────────
+  const taoUsdPrice = taoKlines[taoKlines.length - 1]?.price ?? 0;
+
   const subnets = await fetchEligibleSubnets(env);
   console.log(`[4h] ${subnets.length} subnets to process`);
 
@@ -38,71 +35,71 @@ export async function runFourHourCron(state, env) {
 
   for (const subnet of subnets) {
     try {
-      const klines = await fetchSubnetKlines(subnet.id, "4h", H4_LIMIT, env);
+      const history = await fetchSubnetHistory(subnet.id, H4_FETCH_LIMIT, env);
 
-      if (isTooThinlyTraded(klines)) {
-        console.log(`[4h] SN${subnet.id} excluded: too many zero-volume candles`);
-        continue;
-      }
+      if (historyDays(history) < MIN_HISTORY_DAYS) continue;
 
-      // Subnet prices are in TAO → USDT via log-return additivity
-      const subnetTaoReturns = logReturns(klines.map(k => k.price));
+      const subnetTaoReturns = logReturns(history.map(k => k.price));
       const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
+      // Convert TAO-priced subnet returns → USDT
       const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
         r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
       );
 
       const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
-      // Accuracy vs previous 4H model
+      // Accuracy vs previous h4 model
       const prev = subnetMap[subnet.id];
-      let h4Accuracy = null;
-      let h4MapeHistory = prev?.h4?.mapeHistory ?? [];
+      let h4Acc = null;
+      let h4Mape = prev?.h4?.mapeHistory ?? [];
 
       if (prev?.h4?.beta0 != null && taoSlice.length > 0) {
         const xA = taoSlice[taoSlice.length - 1];
         const yA = subnetUsdtReturns[subnetUsdtReturns.length - 1];
         if (xA != null && yA != null) {
-          h4Accuracy = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
-          if (h4Accuracy !== null) h4MapeHistory = [...h4MapeHistory.slice(-4), 1 - h4Accuracy];
+          h4Acc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
+          if (h4Acc !== null) h4Mape = [...h4Mape.slice(-4), 1 - h4Acc];
         }
       }
 
       if (h4) allAlphas.push(h4.beta0);
 
       const h4State = h4
-        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Accuracy, mapeHistory: h4MapeHistory, windowDays: H4_WINDOW_DAYS }
-        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_WINDOW_DAYS });
+        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: H4_WINDOW }
+        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_WINDOW });
+
+      const tvlUsd = subnet.tvlTao * taoUsdPrice;
 
       if (subnetMap[subnet.id]) {
-        // Update only h4; preserve d1 + w1 + metadata
-        subnetMap[subnet.id] = { ...subnetMap[subnet.id], h4: h4State };
+        subnetMap[subnet.id] = {
+          ...subnetMap[subnet.id],
+          tvl: Math.round(tvlUsd),
+          h4: h4State,
+        };
       } else {
-        // New subnet not yet in state
         subnetMap[subnet.id] = {
           id: subnet.id,
           symbol: subnet.symbol,
           name: subnet.name,
-          tvl: subnet.tvl,
-          regDays: subnet.regDays,
+          tvl: Math.round(tvlUsd),
+          regDays: historyDays(history),
           h4: h4State,
           d1: null,
           w1: null,
         };
       }
 
-      console.log(`[4h] SN${subnet.id} ${subnet.symbol} — h4 R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
+      console.log(`[4h] SN${subnet.id} ${subnet.symbol} R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
     } catch (err) {
       console.error(`[4h] SN${subnet.id} failed: ${err.message}`);
     }
   }
 
-  // Calibrate 4H alpha range
   if (allAlphas.length > 0) {
     state.alphaRanges = state.alphaRanges ?? {};
     state.alphaRanges.h4 = percentileRange(allAlphas, 5, 95);
   }
 
   state.subnets = Object.values(subnetMap);
-  console.log(`[4h] done — ${state.subnets.length} subnets in state`);
+  console.log(`[4h] done — ${state.subnets.length} subnets`);
 }
