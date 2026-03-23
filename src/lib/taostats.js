@@ -56,6 +56,8 @@ export async function fetchSubnetHistory(netuid, limit, env) {
     .map(k => ({
       time: new Date(k.timestamp).getTime(),
       price: parseFloat(k.price),
+      // tao_volume is the TAO traded in this period; fall back to null if absent
+      volume: k.tao_volume != null ? parseFloat(k.tao_volume) : (k.volume != null ? parseFloat(k.volume) : null),
     }))
     .filter(k => k.price > 0 && k.time > 0);
 

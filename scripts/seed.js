@@ -37,7 +37,7 @@ const env = { TAOSTATS_API_KEY: TAOSTATS_KEY };
 // ── Import Worker modules ─────────────────────────────────────────────────────
 const { fetchBinanceKlines } = await import("../src/lib/binance.js");
 const { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS } = await import("../src/lib/taostats.js");
-const { logReturns, alignByTimestamp, linearRegressionPipeline, aggregateToWeekly, percentileRange } = await import("../src/lib/math.js");
+const { logReturns, alignByTimestamp, linearRegressionPipeline, aggregateToWeekly, percentileRange, zeroVolumeRatio } = await import("../src/lib/math.js");
 
 // ── Run daily pipeline ────────────────────────────────────────────────────────
 
@@ -77,6 +77,12 @@ for (const subnet of subnets) {
 
     if (days < MIN_HISTORY_DAYS) {
       process.stdout.write(`skipped (${days} days)\n`);
+      continue;
+    }
+
+    const zvr = zeroVolumeRatio(history);
+    if (zvr > 0.15) {
+      process.stdout.write(`skipped (${(zvr * 100).toFixed(0)}% zero-vol)\n`);
       continue;
     }
 

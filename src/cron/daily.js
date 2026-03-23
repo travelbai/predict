@@ -14,6 +14,7 @@ import {
   aggregateToWeekly,
   percentileRange,
   computeAccuracy,
+  zeroVolumeRatio,
 } from "../lib/math.js";
 
 const BTC_TAO_WEEKS = 52;
@@ -93,6 +94,12 @@ export async function runDailyCron(state, env) {
       const days = historyDays(history);
       if (days < MIN_HISTORY_DAYS) {
         console.log(`[daily] SN${subnet.id} skipped: only ${days} days of history`);
+        continue;
+      }
+
+      const zvr = zeroVolumeRatio(history);
+      if (zvr > 0.15) {
+        console.log(`[daily] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
         continue;
       }
 

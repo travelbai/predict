@@ -15,6 +15,7 @@ import {
   linearRegressionPipeline,
   percentileRange,
   computeAccuracy,
+  zeroVolumeRatio,
 } from "../lib/math.js";
 
 // 180 4H bars = 30 days; fetch a few extra for IQR headroom
@@ -48,6 +49,12 @@ export async function runFourHourCron(state, env) {
       const history = await fetchSubnetHistory(subnet.id, SUBNET_DAILY_LIMIT, env);
 
       if (historyDays(history) < MIN_HISTORY_DAYS) continue;
+
+      const zvr = zeroVolumeRatio(history);
+      if (zvr > 0.15) {
+        console.log(`[4h] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
+        continue;
+      }
 
       // Convert subnet TAO-priced returns → USDT via log-return additivity
       const subnetTaoReturns = logReturns(history.map(k => k.price));
