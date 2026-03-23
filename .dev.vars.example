@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local Worker dev (never commit .dev.vars)
+TAOSTATS_API_KEY=your_taostats_api_key_here
