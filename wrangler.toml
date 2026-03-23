@@ -4,8 +4,8 @@ compatibility_date = "2024-09-02"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "REPLACE_WITH_PROD_KV_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+id = "e14e1d0560e94143acb98cbd25635df3"
+preview_id = "e2d0a50f096d4114a6d80e465ddc3865"
 
 [triggers]
 crons = ["0 0 * * *", "0 */4 * * *"]
