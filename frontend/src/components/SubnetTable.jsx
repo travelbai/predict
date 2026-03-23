@@ -68,7 +68,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
         beta1: d.beta1,
         r2: d.r2,
         accuracy: d.accuracy ?? null,
-        predicted: d.beta0 + d.beta1 * slider,
+        predicted: d.beta0 * 100 + d.beta1 * slider,
         lowLiq: s.tvl < 500000,
       };
     });
@@ -157,7 +157,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
                     {r.beta1.toFixed(2)}
                   </td>
                   <td className="td tc" style={{ color: r.beta0 >= 0 ? C.green : C.red }}>
-                    {r.beta0 >= 0 ? "+" : ""}{r.beta0.toFixed(2)}%
+                    {r.beta0 >= 0 ? "+" : ""}{(r.beta0 * 100).toFixed(2)}%
                   </td>
                   <td className="td tc" style={{ color: r2Color(r.r2) }}>
                     {r.r2.toFixed(2)}

@@ -7,7 +7,7 @@ const fmt = (n, d = 2) => (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
 
 export default function MacroModule({ btcTao, alphaRange }) {
   const [slider, setSlider] = useState(0);
-  const predicted = btcTao.beta0 + btcTao.beta1 * slider;
+  const predicted = btcTao.beta0 * 100 + btcTao.beta1 * slider;
   const isNeg = predicted < 0;
   const r2Color = btcTao.r2 > 0.5 ? C.green : btcTao.r2 >= 0.3 ? C.yellow : C.gray;
 

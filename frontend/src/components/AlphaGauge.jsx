@@ -31,7 +31,7 @@ export default function AlphaGauge({ alpha, alphaRange = [-1, 1] }) {
           <circle cx="100" cy="100" r="4" fill={color} />
         </g>
         <text x="100" y="94" textAnchor="middle" fill={C.text} fontSize="19" fontWeight="700" fontFamily="var(--mono)">
-          {alpha >= 0 ? "+" : ""}{alpha.toFixed(2)}%
+          {alpha >= 0 ? "+" : ""}{(alpha * 100).toFixed(2)}%
         </text>
       </svg>
     </div>
