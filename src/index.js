@@ -1,13 +1,11 @@
-/**
- * Cloudflare Worker — Predict
- *
- * Routes:
- *   GET /api/dashboard  → reads dashboard_state from KV
- *
- * Scheduled triggers (wrangler.toml):
- *   Cron 1: "0 0 * * *"   — daily 00:00 UTC  → BTC/TAO macro + subnet 24H & 1W regression
- *   Cron 2: "0 */4 * * *" — every 4 hours    → subnet 4H regression
- */
+// Cloudflare Worker — Predict
+//
+// Routes:
+//   GET /api/dashboard  → reads dashboard_state from KV
+//
+// Scheduled triggers (wrangler.toml):
+//   Cron 1: "0 0 * * *"     daily 00:00 UTC — BTC/TAO macro + subnet 24H & 1W regression
+//   Cron 2: "0 */4 * * *"   every 4 hours  — subnet 4H regression
 
 import { handleScheduled } from "./cron/scheduler.js";
 import { MOCK_STATE } from "./mock/dashboardState.js";

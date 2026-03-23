@@ -1,9 +1,6 @@
-/**
- * Cron dispatcher.
- *
- * "0 0 * * *"   → Cron 1: BTC/TAO macro + subnet 24H & 1W regression
- * "0 */4 * * *" → Cron 2: subnet 4H regression
- */
+// Cron dispatcher.
+// "0 0 * * *"   → Cron 1: BTC/TAO macro + subnet 24H & 1W regression
+// "0 */4 * * *" → Cron 2: subnet 4H regression
 
 import { runDailyCron } from "./daily.js";
 import { runFourHourCron } from "./fourHour.js";
