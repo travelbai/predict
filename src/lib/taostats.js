@@ -19,6 +19,10 @@ const MIN_HISTORY_DAYS = 14;
  * @param {object} env  Worker env bindings (needs env.TAOSTATS_API_KEY)
  * @returns {{ id, symbol, name, tvlTao, regDays }[]}
  */
+// Max subnets per cron run — keeps total subrequests under Cloudflare's 50-per-invocation limit.
+// Budget: 4 Binance/Taostats list requests + up to 44 subnet history fetches = 48 total.
+const MAX_SUBNETS = 44;
+
 export async function fetchEligibleSubnets(env) {
   const data = await get("/api/dtao/pool/v1", { limit: 200 }, env);
   const subnets = data.data ?? [];
@@ -29,11 +33,11 @@ export async function fetchEligibleSubnets(env) {
       id: s.netuid,
       symbol: (s.name || `SN${s.netuid}`).trim(),
       name: s.name || `SN${s.netuid}`,
-      // total_tao is in rao (1 TAO = 1e9 rao)
       tvlTao: Number(s.total_tao) / 1e9,
-      // Use history size as proxy for registration age (checked after fetching history)
       regDays: null,
-    }));
+    }))
+    .sort((a, b) => b.tvlTao - a.tvlTao) // highest TVL first
+    .slice(0, MAX_SUBNETS);
 }
 
 /**
