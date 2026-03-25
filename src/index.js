@@ -36,20 +36,12 @@ export default {
 
     // DEBUG routes — remove after testing
     if (url.pathname === "/api/run-daily") {
-      try {
-        await handleScheduled("0 0 * * *", env);
-        return json({ status: "ok", cron: "0 0 * * *" });
-      } catch (err) {
-        return json({ status: "error", message: err.message }, 500);
-      }
+      ctx.waitUntil(handleScheduled("0 0 * * *", env));
+      return json({ status: "started", cron: "0 0 * * *" });
     }
     if (url.pathname === "/api/run-4h") {
-      try {
-        await handleScheduled("0 */4 * * *", env);
-        return json({ status: "ok", cron: "0 */4 * * *" });
-      } catch (err) {
-        return json({ status: "error", message: err.message }, 500);
-      }
+      ctx.waitUntil(handleScheduled("0 */4 * * *", env));
+      return json({ status: "started", cron: "0 */4 * * *" });
     }
 
     // DEBUG: sync accuracy probe for one subnet — remove after testing
