@@ -45,8 +45,12 @@ export async function runFourHourCron(state, env) {
   const subnetMap = Object.fromEntries((state.subnets ?? []).map(s => [s.id, s]));
   const allAlphas = [];
 
-  // Process all subnets concurrently — all Taostats fetches in parallel
-  const results = await Promise.allSettled(subnets.map(async subnet => {
+  // Process subnets in parallel batches to avoid Taostats rate-limiting
+  const BATCH = 10;
+  const results = [];
+  for (let i = 0; i < subnets.length; i += BATCH) {
+    const batch = subnets.slice(i, i + BATCH);
+    results.push(...await Promise.allSettled(batch.map(async subnet => {
     const prev = subnetMap[subnet.id];
 
     const h4Win = adaptiveWindow(prev?.h4?.mapeHistory, prev?.h4?.windowDays ?? H4_DEFAULT, H4_MIN, H4_MAX);
@@ -95,7 +99,8 @@ export async function runFourHourCron(state, env) {
     return prev
       ? { ...prev, tvl: tvlUsd, h4: h4State }
       : { id: subnet.id, symbol: subnet.symbol, name: subnet.name, tvl: tvlUsd, regDays: historyDays(history), h4: h4State, d1: null, w1: null };
-  }));
+  })));
+  }
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];

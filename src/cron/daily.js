@@ -92,8 +92,12 @@ export async function runDailyCron(state, env) {
   // TAO/USD price from the last Binance daily candle (needed for TVL conversion)
   const taoUsdPrice = taoDaily[taoDaily.length - 1]?.price ?? 0;
 
-  // Process all subnets concurrently — all Taostats fetches in parallel
-  const results = await Promise.allSettled(subnets.map(async subnet => {
+  // Process subnets in parallel batches to avoid Taostats rate-limiting
+  const BATCH = 10;
+  const results = [];
+  for (let i = 0; i < subnets.length; i += BATCH) {
+    const batch = subnets.slice(i, i + BATCH);
+    results.push(...await Promise.allSettled(batch.map(async subnet => {
     const prev = subnetMap[subnet.id];
 
     const d1Win = adaptiveWindow(prev?.d1?.mapeHistory, prev?.d1?.windowDays ?? D1_DEFAULT, D1_MIN, D1_MAX);
@@ -169,7 +173,8 @@ export async function runDailyCron(state, env) {
       d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: d1Win } : (prev?.d1 ?? null),
       w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: w1Win } : (prev?.w1 ?? null),
     };
-  }));
+  })));
+  }
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
