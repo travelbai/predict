@@ -9,6 +9,13 @@ import { MOCK_STATE } from "../mock/dashboardState.js";
 export async function handleScheduled(cron, env) {
   console.log(`[scheduler] triggered: ${cron}`);
 
+  // Diagnostic: write a heartbeat immediately to confirm ctx.waitUntil is executing
+  try {
+    await env.KV.put("cron_heartbeat", JSON.stringify({ cron, startedAt: new Date().toISOString() }));
+  } catch (e) {
+    console.error(`[scheduler] heartbeat KV write failed: ${e.message}`);
+  }
+
   let state = await loadState(env);
 
   try {

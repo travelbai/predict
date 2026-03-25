@@ -44,6 +44,16 @@ export default {
       return json({ status: "started", cron: "0 */4 * * *" });
     }
 
+    // DEBUG: check heartbeat KV entry — remove after testing
+    if (url.pathname === "/api/check-heartbeat") {
+      try {
+        const raw = await env.KV.get("cron_heartbeat");
+        return json(raw ? JSON.parse(raw) : { error: "no heartbeat found" });
+      } catch (err) {
+        return json({ error: err.message });
+      }
+    }
+
     // DEBUG: sync accuracy probe for one subnet — remove after testing
     if (url.pathname.startsWith("/api/debug-accuracy/")) {
       const subnetId = parseInt(url.pathname.split("/").pop(), 10);
