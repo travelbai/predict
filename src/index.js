@@ -20,7 +20,7 @@ const CORS = {
 
 export default {
   // ── HTTP handler ─────────────────────────────────────────────
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -33,10 +33,12 @@ export default {
 
     // DEBUG routes — remove after testing
     if (url.pathname === "/api/run-daily") {
-      return handleRunCron("0 0 * * *", env);
+      ctx.waitUntil(handleScheduled("0 0 * * *", env));
+      return json({ status: "started", cron: "0 0 * * *", message: "Daily cron running in background — check /api/dashboard in ~60s" });
     }
     if (url.pathname === "/api/run-4h") {
-      return handleRunCron("0 */4 * * *", env);
+      ctx.waitUntil(handleScheduled("0 */4 * * *", env));
+      return json({ status: "started", cron: "0 */4 * * *", message: "4H cron running in background — check /api/dashboard in ~30s" });
     }
 
     return new Response("Not Found", { status: 404 });
@@ -47,15 +49,6 @@ export default {
     ctx.waitUntil(handleScheduled(event.cron, env));
   },
 };
-
-async function handleRunCron(cron, env) {
-  try {
-    await handleScheduled(cron, env);
-    return json({ status: "ok", cron, message: "Cron completed successfully" });
-  } catch (err) {
-    return json({ status: "error", cron, message: err.message }, 500);
-  }
-}
 
 async function handleDashboard(env) {
   try {
