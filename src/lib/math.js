@@ -226,6 +226,39 @@ export function computeAccuracy(beta0Old, beta1Old, xActual, yActual) {
   return Math.max(0, Math.min(1, 1 - mape));
 }
 
+/**
+ * Compute hold-out accuracy by splitting (x, y) into an 80% train / 20% test
+ * partition. Fits OLS on the training set, then measures mean MAPE on the
+ * test set. Returns null when the test set has fewer than 3 usable points.
+ *
+ * @param {number[]} x
+ * @param {number[]} y
+ * @returns {number|null}  value in [0, 1]
+ */
+export function holdoutAccuracy(x, y) {
+  const n = x.length;
+  if (n < 10) return null;
+
+  const trainEnd = Math.floor(n * 0.8);
+  const xTrain = x.slice(0, trainEnd);
+  const yTrain = y.slice(0, trainEnd);
+  const xTest  = x.slice(trainEnd);
+  const yTest  = y.slice(trainEnd);
+
+  const { beta0, beta1 } = linearRegression(xTrain, yTrain);
+
+  let sum = 0, count = 0;
+  for (let i = 0; i < xTest.length; i++) {
+    if (Math.abs(yTest[i]) < 1e-10) continue;
+    const yPred = beta0 + beta1 * xTest[i];
+    sum += Math.abs(yPred - yTest[i]) / Math.abs(yTest[i]);
+    count++;
+  }
+
+  if (count < 3) return null;
+  return Math.max(0, Math.min(1, 1 - sum / count));
+}
+
 // ── Adaptive window ───────────────────────────────────────────────────────────
 
 /**

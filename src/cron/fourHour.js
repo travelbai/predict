@@ -15,6 +15,7 @@ import {
   linearRegressionPipeline,
   percentileRange,
   computeAccuracy,
+  holdoutAccuracy,
   zeroVolumeRatio,
   adaptiveWindow,
 } from "../lib/math.js";
@@ -73,16 +74,18 @@ export async function runFourHourCron(state, env) {
 
       const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
-      // Accuracy vs previous h4 model
-      let h4Acc = null;
-      let h4Mape = prev?.h4?.mapeHistory ?? [];
+      // Hold-out accuracy from current data (train 80% / test 20%)
+      const cleanH4 = taoSlice.map((x, i) => [x, subnetUsdtReturns[i]]).filter(([x, y]) => x !== null && y !== null);
+      const h4Acc = holdoutAccuracy(cleanH4.map(p => p[0]), cleanH4.map(p => p[1]));
 
+      // Cross-run single-point MAPE for adaptive window only
+      let h4Mape = prev?.h4?.mapeHistory ?? [];
       if (prev?.h4?.beta0 != null && taoSlice.length > 0) {
         const xA = taoSlice[taoSlice.length - 1];
         const yA = subnetUsdtReturns[subnetUsdtReturns.length - 1];
         if (xA != null && yA != null) {
-          h4Acc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
-          if (h4Acc !== null) h4Mape = [...h4Mape.slice(-4), 1 - h4Acc];
+          const singleAcc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
+          if (singleAcc !== null) h4Mape = [...h4Mape.slice(-4), 1 - singleAcc];
         }
       }
 
