@@ -14,7 +14,6 @@ import {
   aggregateToWeekly,
   percentileRange,
   computeAccuracy,
-  holdoutAccuracy,
   zeroVolumeRatio,
   adaptiveWindow,
 } from "../lib/math.js";
@@ -44,15 +43,16 @@ export async function runDailyCron(state, env) {
   const btcReturns = logReturns(btcPrices);
   const taoWeeklyReturns = logReturns(taoPrices);
 
-  // Cross-run single-point MAPE (used only for mapeHistory / adaptive window)
+  // Cross-run single-point accuracy for BTC→TAO
+  let btcTaoAccuracy = null;
   let btcTaoMapeHistory = state.btcTao?.mapeHistory ?? [];
-  if (state.btcTao?.beta0 != null && btcReturns.length > 0) {
+  if (state.btcTao?.beta0 != null) {
     const xA = btcReturns[btcReturns.length - 1];
     const yA = taoWeeklyReturns[taoWeeklyReturns.length - 1];
-    if (xA != null && yA != null) {
-      const singleAcc = computeAccuracy(state.btcTao.beta0, state.btcTao.beta1, xA, yA);
-      if (singleAcc !== null)
-        btcTaoMapeHistory = [...btcTaoMapeHistory.slice(-4), 1 - singleAcc];
+    if (Number.isFinite(xA) && Number.isFinite(yA)) {
+      btcTaoAccuracy = computeAccuracy(state.btcTao.beta0, state.btcTao.beta1, xA, yA);
+      if (btcTaoAccuracy !== null)
+        btcTaoMapeHistory = [...btcTaoMapeHistory.slice(-4), 1 - btcTaoAccuracy];
     }
   }
 
@@ -63,7 +63,7 @@ export async function runDailyCron(state, env) {
     beta0: btcTaoResult.beta0,
     beta1: btcTaoResult.beta1,
     r2: btcTaoResult.r2,
-    accuracy: holdoutAccuracy(btcReturns.filter(v => v !== null), taoWeeklyReturns.filter(v => v !== null)),
+    accuracy: btcTaoAccuracy,
     mapeHistory: btcTaoMapeHistory,
     windowDays: 360,
     window: "360d / 52w",
@@ -133,27 +133,27 @@ export async function runDailyCron(state, env) {
     );
     const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
 
-    const cleanD1 = taoSlice_d1.map((x, i) => [x, subnetUsdtReturns_d1[i]]).filter(([x, y]) => x !== null && y !== null);
-    const cleanW1 = taoSlice_w1.map((x, i) => [x, subnetUsdtReturns_w1[i]]).filter(([x, y]) => x !== null && y !== null);
-    const d1Acc = holdoutAccuracy(cleanD1.map(p => p[0]), cleanD1.map(p => p[1]));
-    const w1Acc = holdoutAccuracy(cleanW1.map(p => p[0]), cleanW1.map(p => p[1]));
-
+    // Cross-run single-point accuracy: old β predicts latest actual data point
+    let d1Acc = null, w1Acc = null;
     let d1Mape = prev?.d1?.mapeHistory ?? [];
     let w1Mape = prev?.w1?.mapeHistory ?? [];
-    if (prev?.d1?.beta0 != null && taoSlice_d1.length > 0) {
-      const xA = taoSlice_d1[taoSlice_d1.length - 1];
-      const yA = subnetUsdtReturns_d1[subnetUsdtReturns_d1.length - 1];
-      if (xA != null && yA != null) {
-        const singleAcc = computeAccuracy(prev.d1.beta0, prev.d1.beta1, xA, yA);
-        if (singleAcc !== null) d1Mape = [...d1Mape.slice(-4), 1 - singleAcc];
+
+    if (prev?.d1?.beta0 != null) {
+      const lastIdx = subnetUsdtReturns_d1.length - 1;
+      const xA = taoSlice_d1[lastIdx];
+      const yA = subnetUsdtReturns_d1[lastIdx];
+      if (Number.isFinite(xA) && Number.isFinite(yA)) {
+        d1Acc = computeAccuracy(prev.d1.beta0, prev.d1.beta1, xA, yA);
+        if (d1Acc !== null) d1Mape = [...d1Mape.slice(-4), 1 - d1Acc];
       }
     }
-    if (prev?.w1?.beta0 != null && taoSlice_w1.length > 0) {
-      const xA = taoSlice_w1[taoSlice_w1.length - 1];
-      const yA = subnetUsdtReturns_w1[subnetUsdtReturns_w1.length - 1];
-      if (xA != null && yA != null) {
-        const singleAcc = computeAccuracy(prev.w1.beta0, prev.w1.beta1, xA, yA);
-        if (singleAcc !== null) w1Mape = [...w1Mape.slice(-4), 1 - singleAcc];
+    if (prev?.w1?.beta0 != null) {
+      const lastIdx = subnetUsdtReturns_w1.length - 1;
+      const xA = taoSlice_w1[lastIdx];
+      const yA = subnetUsdtReturns_w1[lastIdx];
+      if (Number.isFinite(xA) && Number.isFinite(yA)) {
+        w1Acc = computeAccuracy(prev.w1.beta0, prev.w1.beta1, xA, yA);
+        if (w1Acc !== null) w1Mape = [...w1Mape.slice(-4), 1 - w1Acc];
       }
     }
 
