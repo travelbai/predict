@@ -11,6 +11,9 @@
 
 import { handleScheduled } from "./cron/scheduler.js";
 import { MOCK_STATE } from "./mock/dashboardState.js";
+import { fetchBinanceKlines } from "./lib/binance.js";
+import { fetchSubnetHistory, historyDays } from "./lib/taostats.js";
+import { logReturns, aggregateToDaily, computeAccuracy } from "./lib/math.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,6 +44,12 @@ export default {
       return json({ status: "started", cron: "0 */4 * * *", message: "4H cron running in background — check /api/dashboard in ~30s" });
     }
 
+    // DEBUG: sync accuracy probe for one subnet — remove after testing
+    if (url.pathname.startsWith("/api/debug-accuracy/")) {
+      const subnetId = parseInt(url.pathname.split("/").pop(), 10);
+      return handleDebugAccuracy(subnetId, env);
+    }
+
     return new Response("Not Found", { status: 404 });
   },
 
@@ -49,6 +58,52 @@ export default {
     ctx.waitUntil(handleScheduled(event.cron, env));
   },
 };
+
+async function handleDebugAccuracy(subnetId, env) {
+  try {
+    const raw = await env.KV.get("dashboard_state");
+    const state = raw ? JSON.parse(raw) : MOCK_STATE;
+    const prev = (state.subnets ?? []).find(s => s.id === subnetId);
+    if (!prev) return json({ error: `subnet ${subnetId} not found in KV` });
+
+    const tao4h = await fetchBinanceKlines("TAOUSDT", "4h", 180);
+    const taoDaily = aggregateToDaily(tao4h);
+    const taoReturns = logReturns(taoDaily.map(k => k.price));
+
+    const h4Win = prev.h4?.windowDays ?? 30;
+    const history = await fetchSubnetHistory(subnetId, h4Win + 5, env);
+    const recentH4 = history.slice(-h4Win);
+    const subnetTaoReturns = logReturns(recentH4.map(k => k.price));
+    const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
+    const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
+      r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
+    );
+
+    const lastIdx = subnetUsdtReturns.length - 1;
+    const xA = taoSlice[lastIdx];
+    const yA = subnetUsdtReturns[lastIdx];
+
+    return json({
+      subnetId,
+      prevBeta0: prev.h4?.beta0,
+      prevBeta1: prev.h4?.beta1,
+      taoReturnsLen: taoReturns.length,
+      subnetTaoReturnsLen: subnetTaoReturns.length,
+      taoSliceLen: taoSlice.length,
+      lastIdx,
+      xA,
+      yA,
+      xA_isFinite: Number.isFinite(xA),
+      yA_isFinite: Number.isFinite(yA),
+      yA_absLt1e10: Math.abs(yA) < 1e-10,
+      accuracy: (Number.isFinite(xA) && Number.isFinite(yA))
+        ? computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA)
+        : "skipped",
+    });
+  } catch (err) {
+    return json({ error: err.message });
+  }
+}
 
 async function handleDashboard(env) {
   try {
