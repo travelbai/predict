@@ -46,75 +46,64 @@ export async function runFourHourCron(state, env) {
   const subnetMap = Object.fromEntries((state.subnets ?? []).map(s => [s.id, s]));
   const allAlphas = [];
 
-  for (const subnet of subnets) {
-    try {
-      const prev = subnetMap[subnet.id];
+  // Process all subnets concurrently — all Taostats fetches in parallel
+  const results = await Promise.allSettled(subnets.map(async subnet => {
+    const prev = subnetMap[subnet.id];
 
-      // Compute adaptive window before fetching
-      const h4Win = adaptiveWindow(prev?.h4?.mapeHistory, prev?.h4?.windowDays ?? H4_DEFAULT, H4_MIN, H4_MAX);
-      const fetchDays = h4Win + 5; // +5 headroom for IQR filter
+    const h4Win = adaptiveWindow(prev?.h4?.mapeHistory, prev?.h4?.windowDays ?? H4_DEFAULT, H4_MIN, H4_MAX);
+    const fetchDays = h4Win + 5;
 
-      const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
+    const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
 
-      if (historyDays(history) < MIN_HISTORY_DAYS) continue;
+    if (historyDays(history) < MIN_HISTORY_DAYS) return null;
 
-      const zvr = zeroVolumeRatio(history);
-      if (zvr > 0.15) {
-        console.log(`[4h] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
-        continue;
+    const zvr = zeroVolumeRatio(history);
+    if (zvr > 0.15) {
+      console.log(`[4h] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
+      return null;
+    }
+
+    const recentH4 = history.slice(-h4Win);
+    const subnetTaoReturns = logReturns(recentH4.map(k => k.price));
+    const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
+    const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
+      r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
+    );
+
+    const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
+
+    const cleanH4 = taoSlice.map((x, i) => [x, subnetUsdtReturns[i]]).filter(([x, y]) => x !== null && y !== null);
+    const h4Acc = holdoutAccuracy(cleanH4.map(p => p[0]), cleanH4.map(p => p[1]));
+
+    let h4Mape = prev?.h4?.mapeHistory ?? [];
+    if (prev?.h4?.beta0 != null && taoSlice.length > 0) {
+      const xA = taoSlice[taoSlice.length - 1];
+      const yA = subnetUsdtReturns[subnetUsdtReturns.length - 1];
+      if (xA != null && yA != null) {
+        const singleAcc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
+        if (singleAcc !== null) h4Mape = [...h4Mape.slice(-4), 1 - singleAcc];
       }
+    }
 
-      // Slice to the adaptive window, then convert TAO-priced returns → USDT
-      const recentH4 = history.slice(-h4Win);
-      const subnetTaoReturns = logReturns(recentH4.map(k => k.price));
-      const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
-      const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
-        r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
-      );
+    const h4State = h4
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: h4Win }
+      : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
 
-      const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
+    const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
+    console.log(`[4h] SN${subnet.id} ${subnet.symbol} win=${h4Win}d R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
 
-      // Hold-out accuracy from current data (train 80% / test 20%)
-      const cleanH4 = taoSlice.map((x, i) => [x, subnetUsdtReturns[i]]).filter(([x, y]) => x !== null && y !== null);
-      const h4Acc = holdoutAccuracy(cleanH4.map(p => p[0]), cleanH4.map(p => p[1]));
+    return prev
+      ? { ...prev, tvl: tvlUsd, h4: h4State }
+      : { id: subnet.id, symbol: subnet.symbol, name: subnet.name, tvl: tvlUsd, regDays: historyDays(history), h4: h4State, d1: null, w1: null };
+  }));
 
-      // Cross-run single-point MAPE for adaptive window only
-      let h4Mape = prev?.h4?.mapeHistory ?? [];
-      if (prev?.h4?.beta0 != null && taoSlice.length > 0) {
-        const xA = taoSlice[taoSlice.length - 1];
-        const yA = subnetUsdtReturns[subnetUsdtReturns.length - 1];
-        if (xA != null && yA != null) {
-          const singleAcc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
-          if (singleAcc !== null) h4Mape = [...h4Mape.slice(-4), 1 - singleAcc];
-        }
-      }
-
-      if (h4) allAlphas.push(h4.beta0);
-
-      const h4State = h4
-        ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: h4Win }
-        : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
-
-      const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
-
-      if (prev) {
-        subnetMap[subnet.id] = { ...prev, tvl: tvlUsd, h4: h4State };
-      } else {
-        subnetMap[subnet.id] = {
-          id: subnet.id,
-          symbol: subnet.symbol,
-          name: subnet.name,
-          tvl: tvlUsd,
-          regDays: historyDays(history),
-          h4: h4State,
-          d1: null,
-          w1: null,
-        };
-      }
-
-      console.log(`[4h] SN${subnet.id} ${subnet.symbol} win=${h4Win}d R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
-    } catch (err) {
-      console.error(`[4h] SN${subnet.id} failed: ${err.message}`);
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === "rejected") {
+      console.error(`[4h] SN${subnets[i].id} failed: ${r.reason?.message}`);
+    } else if (r.value !== null) {
+      subnetMap[r.value.id] = r.value;
+      if (r.value.h4?.beta0 != null) allAlphas.push(r.value.h4.beta0);
     }
   }
 

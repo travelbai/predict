@@ -92,100 +92,93 @@ export async function runDailyCron(state, env) {
   // TAO/USD price from the last Binance daily candle (needed for TVL conversion)
   const taoUsdPrice = taoDaily[taoDaily.length - 1]?.price ?? 0;
 
-  for (const subnet of subnets) {
-    try {
-      const prev = subnetMap[subnet.id];
+  // Process all subnets concurrently — all Taostats fetches in parallel
+  const results = await Promise.allSettled(subnets.map(async subnet => {
+    const prev = subnetMap[subnet.id];
 
-      // Compute adaptive windows before fetching (needs prev mapeHistory)
-      const d1Win = adaptiveWindow(prev?.d1?.mapeHistory, prev?.d1?.windowDays ?? D1_DEFAULT, D1_MIN, D1_MAX);
-      const w1Win = adaptiveWindow(prev?.w1?.mapeHistory, prev?.w1?.windowDays ?? W1_DEFAULT, W1_MIN, W1_MAX);
-      const fetchDays = Math.min(Math.max(d1Win, w1Win) + 5, W1_MAX + 5);
+    const d1Win = adaptiveWindow(prev?.d1?.mapeHistory, prev?.d1?.windowDays ?? D1_DEFAULT, D1_MIN, D1_MAX);
+    const w1Win = adaptiveWindow(prev?.w1?.mapeHistory, prev?.w1?.windowDays ?? W1_DEFAULT, W1_MIN, W1_MAX);
+    const fetchDays = Math.min(Math.max(d1Win, w1Win) + 5, W1_MAX + 5);
 
-      const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
+    const history = await fetchSubnetHistory(subnet.id, fetchDays, env);
 
-      const days = historyDays(history);
-      if (days < MIN_HISTORY_DAYS) {
-        console.log(`[daily] SN${subnet.id} skipped: only ${days} days of history`);
-        continue;
+    const days = historyDays(history);
+    if (days < MIN_HISTORY_DAYS) {
+      console.log(`[daily] SN${subnet.id} skipped: only ${days} days of history`);
+      return null;
+    }
+
+    const zvr = zeroVolumeRatio(history);
+    if (zvr > 0.15) {
+      console.log(`[daily] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
+      return null;
+    }
+
+    const tvlUsd = subnet.tvlTao * taoUsdPrice;
+
+    const recentD1 = history.slice(-d1Win);
+    const subnetTaoReturns_d1 = logReturns(recentD1.map(k => k.price));
+    const taoSlice_d1 = taoDailyReturns.slice(-subnetTaoReturns_d1.length);
+    const subnetUsdtReturns_d1 = subnetTaoReturns_d1.map((r, i) =>
+      r !== null && taoSlice_d1[i] !== null ? r + taoSlice_d1[i] : null
+    );
+    const d1 = linearRegressionPipeline(taoSlice_d1, subnetUsdtReturns_d1);
+
+    const recentW1 = history.slice(-w1Win);
+    const weekly = aggregateToWeekly(recentW1);
+    const subnetTaoReturns_w1 = logReturns(weekly.map(k => k.price));
+    const taoSlice_w1 = taoWeeklyReturns.slice(-subnetTaoReturns_w1.length);
+    const subnetUsdtReturns_w1 = subnetTaoReturns_w1.map((r, i) =>
+      r !== null && taoSlice_w1[i] !== null ? r + taoSlice_w1[i] : null
+    );
+    const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
+
+    const cleanD1 = taoSlice_d1.map((x, i) => [x, subnetUsdtReturns_d1[i]]).filter(([x, y]) => x !== null && y !== null);
+    const cleanW1 = taoSlice_w1.map((x, i) => [x, subnetUsdtReturns_w1[i]]).filter(([x, y]) => x !== null && y !== null);
+    const d1Acc = holdoutAccuracy(cleanD1.map(p => p[0]), cleanD1.map(p => p[1]));
+    const w1Acc = holdoutAccuracy(cleanW1.map(p => p[0]), cleanW1.map(p => p[1]));
+
+    let d1Mape = prev?.d1?.mapeHistory ?? [];
+    let w1Mape = prev?.w1?.mapeHistory ?? [];
+    if (prev?.d1?.beta0 != null && taoSlice_d1.length > 0) {
+      const xA = taoSlice_d1[taoSlice_d1.length - 1];
+      const yA = subnetUsdtReturns_d1[subnetUsdtReturns_d1.length - 1];
+      if (xA != null && yA != null) {
+        const singleAcc = computeAccuracy(prev.d1.beta0, prev.d1.beta1, xA, yA);
+        if (singleAcc !== null) d1Mape = [...d1Mape.slice(-4), 1 - singleAcc];
       }
-
-      const zvr = zeroVolumeRatio(history);
-      if (zvr > 0.15) {
-        console.log(`[daily] SN${subnet.id} skipped: ${(zvr * 100).toFixed(0)}% zero-volume candles`);
-        continue;
+    }
+    if (prev?.w1?.beta0 != null && taoSlice_w1.length > 0) {
+      const xA = taoSlice_w1[taoSlice_w1.length - 1];
+      const yA = subnetUsdtReturns_w1[subnetUsdtReturns_w1.length - 1];
+      if (xA != null && yA != null) {
+        const singleAcc = computeAccuracy(prev.w1.beta0, prev.w1.beta1, xA, yA);
+        if (singleAcc !== null) w1Mape = [...w1Mape.slice(-4), 1 - singleAcc];
       }
+    }
 
-      // TVL in USD
-      const tvlUsd = subnet.tvlTao * taoUsdPrice;
+    console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
 
-      // ── d1 regression: last d1Win daily candles ────────────────────────
-      const recentD1 = history.slice(-d1Win);
-      const subnetTaoReturns_d1 = logReturns(recentD1.map(k => k.price));
-      const taoSlice_d1 = taoDailyReturns.slice(-subnetTaoReturns_d1.length);
-      // Convert subnet returns TAO→USDT via log-return additivity
-      const subnetUsdtReturns_d1 = subnetTaoReturns_d1.map((r, i) =>
-        r !== null && taoSlice_d1[i] !== null ? r + taoSlice_d1[i] : null
-      );
-      const d1 = linearRegressionPipeline(taoSlice_d1, subnetUsdtReturns_d1);
+    return {
+      id: subnet.id,
+      symbol: subnet.symbol,
+      name: subnet.name,
+      tvl: Math.round(tvlUsd),
+      regDays: days,
+      h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: 30 },
+      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: d1Win } : (prev?.d1 ?? null),
+      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: w1Win } : (prev?.w1 ?? null),
+    };
+  }));
 
-      // ── w1 regression: last w1Win days aggregated to weekly ────────────
-      const recentW1 = history.slice(-w1Win);
-      const weekly = aggregateToWeekly(recentW1);
-      const subnetTaoReturns_w1 = logReturns(weekly.map(k => k.price));
-      const taoSlice_w1 = taoWeeklyReturns.slice(-subnetTaoReturns_w1.length);
-      const subnetUsdtReturns_w1 = subnetTaoReturns_w1.map((r, i) =>
-        r !== null && taoSlice_w1[i] !== null ? r + taoSlice_w1[i] : null
-      );
-      const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
-
-      // Hold-out accuracy from current data (train 80% / test 20%)
-      const cleanD1 = taoSlice_d1.map((x, i) => [x, subnetUsdtReturns_d1[i]]).filter(([x, y]) => x !== null && y !== null);
-      const cleanW1 = taoSlice_w1.map((x, i) => [x, subnetUsdtReturns_w1[i]]).filter(([x, y]) => x !== null && y !== null);
-      const d1Acc = holdoutAccuracy(cleanD1.map(p => p[0]), cleanD1.map(p => p[1]));
-      const w1Acc = holdoutAccuracy(cleanW1.map(p => p[0]), cleanW1.map(p => p[1]));
-
-      // Cross-run single-point MAPE for adaptive window only
-      let d1Mape = prev?.d1?.mapeHistory ?? [];
-      let w1Mape = prev?.w1?.mapeHistory ?? [];
-      if (prev?.d1?.beta0 != null && taoSlice_d1.length > 0) {
-        const xA = taoSlice_d1[taoSlice_d1.length - 1];
-        const yA = subnetUsdtReturns_d1[subnetUsdtReturns_d1.length - 1];
-        if (xA != null && yA != null) {
-          const singleAcc = computeAccuracy(prev.d1.beta0, prev.d1.beta1, xA, yA);
-          if (singleAcc !== null) d1Mape = [...d1Mape.slice(-4), 1 - singleAcc];
-        }
-      }
-      if (prev?.w1?.beta0 != null && taoSlice_w1.length > 0) {
-        const xA = taoSlice_w1[taoSlice_w1.length - 1];
-        const yA = subnetUsdtReturns_w1[subnetUsdtReturns_w1.length - 1];
-        if (xA != null && yA != null) {
-          const singleAcc = computeAccuracy(prev.w1.beta0, prev.w1.beta1, xA, yA);
-          if (singleAcc !== null) w1Mape = [...w1Mape.slice(-4), 1 - singleAcc];
-        }
-      }
-
-      if (d1) allAlphas.d1.push(d1.beta0);
-      if (w1) allAlphas.w1.push(w1.beta0);
-
-      subnetMap[subnet.id] = {
-        id: subnet.id,
-        symbol: subnet.symbol,
-        name: subnet.name,
-        tvl: Math.round(tvlUsd),
-        regDays: days,
-        // Preserve h4 from the 4H cron; daily cron only updates d1 + w1
-        h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: 30 },
-        d1: d1
-          ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: d1Win }
-          : (prev?.d1 ?? null),
-        w1: w1
-          ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: w1Win }
-          : (prev?.w1 ?? null),
-      };
-
-      console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
-    } catch (err) {
-      console.error(`[daily] SN${subnet.id} failed: ${err.message}`);
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === "rejected") {
+      console.error(`[daily] SN${subnets[i].id} failed: ${r.reason?.message}`);
+    } else if (r.value !== null) {
+      subnetMap[r.value.id] = r.value;
+      if (r.value.d1?.beta0 != null) allAlphas.d1.push(r.value.d1.beta0);
+      if (r.value.w1?.beta0 != null) allAlphas.w1.push(r.value.w1.beta0);
     }
   }
 
