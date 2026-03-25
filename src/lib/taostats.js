@@ -5,7 +5,7 @@
 // Docs     : https://docs.taostats.io
 
 const BASE = "https://api.taostats.io";
-const RETRY_DELAYS = [60_000, 300_000, 900_000];
+const RETRY_DELAYS = [3_000, 8_000, 20_000];
 
 // Subnet admission: at least 14 days of price history
 const MIN_HISTORY_DAYS = 14;
