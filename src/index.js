@@ -2,6 +2,8 @@
 //
 // Routes:
 //   GET /api/dashboard  → reads dashboard_state from KV
+//   GET /api/run-daily  → manually trigger Daily Cron (debug only — remove when done)
+//   GET /api/run-4h     → manually trigger 4H Cron   (debug only — remove when done)
 //
 // Scheduled triggers (wrangler.toml):
 //   Cron 1: "0 0 * * *"     daily 00:00 UTC — BTC/TAO macro + subnet 24H & 1W regression
@@ -29,6 +31,14 @@ export default {
       return handleDashboard(env);
     }
 
+    // DEBUG routes — remove after testing
+    if (url.pathname === "/api/run-daily") {
+      return handleRunCron("0 0 * * *", env);
+    }
+    if (url.pathname === "/api/run-4h") {
+      return handleRunCron("0 */4 * * *", env);
+    }
+
     return new Response("Not Found", { status: 404 });
   },
 
@@ -37,6 +47,15 @@ export default {
     ctx.waitUntil(handleScheduled(event.cron, env));
   },
 };
+
+async function handleRunCron(cron, env) {
+  try {
+    await handleScheduled(cron, env);
+    return json({ status: "ok", cron, message: "Cron completed successfully" });
+  } catch (err) {
+    return json({ status: "error", cron, message: err.message }, 500);
+  }
+}
 
 async function handleDashboard(env) {
   try {
