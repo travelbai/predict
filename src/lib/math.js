@@ -246,15 +246,17 @@ export function holdoutAccuracy(x, y) {
 
   const { beta0, beta1 } = linearRegression(xTrain, yTrain);
 
-  let sum = 0, count = 0;
+  // Holdout R²: fraction of test-set variance explained by the model
+  const yMean = mean(yTest);
+  let ssTot = 0, ssRes = 0;
   for (let i = 0; i < xTest.length; i++) {
     const yPred = beta0 + beta1 * xTest[i];
-    sum += symmetricMAPE(yPred, yTest[i]);
-    count++;
+    ssRes += (yTest[i] - yPred) ** 2;
+    ssTot += (yTest[i] - yMean) ** 2;
   }
 
-  if (count < 3) return null;
-  return Math.max(0, Math.min(1, 1 - sum / count));
+  if (ssTot < 1e-10) return null;
+  return Math.max(0, 1 - ssRes / ssTot);
 }
 
 // ── Adaptive window ───────────────────────────────────────────────────────────

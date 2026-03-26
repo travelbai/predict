@@ -135,7 +135,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
               <TH label="Alpha"       sortKey="beta0"     {...thProps} />
               <TH label="R²"          sortKey="r2"        {...thProps} />
               <TH label="Predict"     sortKey="predicted" {...thProps} />
-              <TH label="Accuracy"    sortKey="accuracy"  {...thProps} />
+              <TH label="准确率"      sortKey="accuracy"  {...thProps} />
             </tr>
           </thead>
           <tbody>

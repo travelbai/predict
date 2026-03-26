@@ -75,8 +75,8 @@ export async function runFourHourCron(state, env, batch = 0) {
 
     const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
-    // Cross-run accuracy: prev betas predict latest valid actual data point
-    let crossRunAcc = null;
+    // Cross-run sMAPE for h4: prev betas vs latest actual → drives mapeHistory
+    let crossRunSmape = null;
     if (prev?.h4?.beta0 != null) {
       for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
         const xA = taoSlice[j];
@@ -84,16 +84,18 @@ export async function runFourHourCron(state, env, batch = 0) {
         if (Number.isFinite(xA) && Number.isFinite(yA)) {
           const yPred = prev.h4.beta0 + prev.h4.beta1 * xA;
           const denom = (Math.abs(yPred) + Math.abs(yA)) / 2;
-          const smape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
-          crossRunAcc = Math.max(0, Math.min(1, 1 - smape));
+          crossRunSmape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
           break;
         }
       }
     }
+    const mapeHistory_h4 = crossRunSmape != null
+      ? [...(prev?.h4?.mapeHistory ?? []), crossRunSmape].slice(-10)
+      : (prev?.h4?.mapeHistory ?? []);
 
     const h4State = h4
-      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy ?? crossRunAcc, windowDays: h4Win }
-      : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: H4_DEFAULT });
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy, mapeHistory: mapeHistory_h4, windowDays: h4Win }
+      : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
 
     const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
     console.log(`[4h] SN${subnet.id} ${subnet.symbol} win=${h4Win}d R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);
