@@ -9,12 +9,12 @@ import { MOCK_STATE } from "../mock/dashboardState.js";
 // Maps each cron expression to its job type and batch index.
 // Batch 0 = top 44 by TVL, batch 1 = next 44, batch 2 = remainder.
 const CRON_MAP = {
-  "2 0 * * *":    { type: "daily", batch: 0 },
-  "12 0 * * *":   { type: "daily", batch: 1 },
-  "22 0 * * *":   { type: "daily", batch: 2 },
+  "0 2 * * *":    { type: "daily", batch: 0 },
+  "20 2 * * *":   { type: "daily", batch: 1 },
+  "40 2 * * *":   { type: "daily", batch: 2 },
   "0 */4 * * *":  { type: "4h",    batch: 0 },
-  "10 */4 * * *": { type: "4h",    batch: 1 },
-  "20 */4 * * *": { type: "4h",    batch: 2 },
+  "20 */4 * * *": { type: "4h",    batch: 1 },
+  "40 */4 * * *": { type: "4h",    batch: 2 },
 };
 
 export async function handleScheduled(cron, env) {

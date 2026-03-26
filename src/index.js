@@ -36,7 +36,7 @@ export default {
 
     // DEBUG routes — remove after testing
     if (url.pathname === "/api/run-daily") {
-      ctx.waitUntil(handleScheduled("2 0 * * *", env));
+      ctx.waitUntil(handleScheduled("0 2 * * *", env));
       const debug = await handleAccuracyProbe("d1", env);
       return json({ status: "cron_started", accuracyProbe: debug });
     }
