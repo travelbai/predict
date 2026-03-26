@@ -12,14 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clear existing cron triggers
-        run: |
-          curl -s -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/workers/scripts/predict-worker/schedules" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '[]'
-
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
@@ -29,6 +21,14 @@ jobs:
             TAOSTATS_API_KEY
         env:
           TAOSTATS_API_KEY: ${{ secrets.TAOSTATS_API_KEY }}
+
+      - name: Set cron triggers
+        run: |
+          curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/workers/scripts/predict-worker/schedules" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '[{"cron":"0 2 * * *"},{"cron":"20 2 * * *"},{"cron":"40 2 * * *"},{"cron":"0 */4 * * *"},{"cron":"30 */4 * * *"}]'
 
   # ── Build & Deploy Cloudflare Pages ────────────────────────────────────────
   deploy-frontend:
