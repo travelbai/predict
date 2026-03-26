@@ -17,10 +17,11 @@ import {
   adaptiveWindow,
 } from "../lib/math.js";
 
-const BTC_TAO_WEEKS = 52;
 // TAO daily fetch must cover the max d1 window + 1 price point for returns
 const TAO_DAILY_FETCH = 185;
 
+// Adaptive window bounds (weeks)
+const BTC_TAO_MIN = 26, BTC_TAO_MAX = 104, BTC_TAO_DEFAULT = 52;
 // Adaptive window bounds (days)
 const D1_MIN = 30, D1_MAX = 180, D1_DEFAULT = 90;
 const W1_MIN = 90, W1_MAX = 360, W1_DEFAULT = 180;
@@ -32,9 +33,16 @@ export async function runDailyCron(state, env, batch = 0) {
   // ── Step 1: BTC → TAO macro ───────────────────────────────────────────────
   console.log("[daily] step 1: Binance BTC + TAO weekly klines");
 
+  const btcTaoWeeks = adaptiveWindow(
+    state.btcTao?.mapeHistory,
+    state.btcTao?.windowWeeks ?? BTC_TAO_DEFAULT,
+    BTC_TAO_MIN,
+    BTC_TAO_MAX,
+  );
+
   const [btcWeekly, taoWeekly, taoDaily] = await Promise.all([
-    fetchBinanceKlines("BTCUSDT", "1w", BTC_TAO_WEEKS),
-    fetchBinanceKlines("TAOUSDT", "1w", BTC_TAO_WEEKS),
+    fetchBinanceKlines("BTCUSDT", "1w", btcTaoWeeks),
+    fetchBinanceKlines("TAOUSDT", "1w", btcTaoWeeks),
     fetchBinanceKlines("TAOUSDT", "1d", TAO_DAILY_FETCH),
   ]);
 
@@ -45,14 +53,34 @@ export async function runDailyCron(state, env, batch = 0) {
   const btcTaoResult = linearRegressionPipeline(btcReturns, taoWeeklyReturns);
   if (!btcTaoResult) throw new Error("BTC→TAO: insufficient clean samples");
 
+  // Cross-run sMAPE for btcTao → drives mapeHistory
+  let btcTaoSmape = null;
+  if (state.btcTao?.beta0 != null) {
+    for (let j = taoWeeklyReturns.length - 1; j >= 0; j--) {
+      const xA = btcReturns[j];
+      const yA = taoWeeklyReturns[j];
+      if (Number.isFinite(xA) && Number.isFinite(yA)) {
+        const yPred = state.btcTao.beta0 + state.btcTao.beta1 * xA;
+        const denom = (Math.abs(yPred) + Math.abs(yA)) / 2;
+        btcTaoSmape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
+        break;
+      }
+    }
+  }
+  const btcTaoMapeHistory = btcTaoSmape != null
+    ? [...(state.btcTao?.mapeHistory ?? []), btcTaoSmape].slice(-10)
+    : (state.btcTao?.mapeHistory ?? []);
+
   state.btcTao = {
     beta0: btcTaoResult.beta0,
     beta1: btcTaoResult.beta1,
     r2: btcTaoResult.r2,
     accuracy: btcTaoResult.accuracy,
-    windowDays: 360,
-    window: "360d / 52w",
+    windowWeeks: btcTaoWeeks,
+    windowDays: btcTaoWeeks * 7,
+    window: `${btcTaoWeeks * 7}d / ${btcTaoWeeks}w`,
     sampleCount: btcTaoResult.sampleCount,
+    mapeHistory: btcTaoMapeHistory,
     calculatedAt: now,
   };
 
@@ -140,6 +168,7 @@ export async function runDailyCron(state, env, batch = 0) {
     const mapeHistory_d1 = crossRunSmape_d1 != null
       ? [...(prev?.d1?.mapeHistory ?? []), crossRunSmape_d1].slice(-10)
       : (prev?.d1?.mapeHistory ?? []);
+    const crossRunAcc_d1 = crossRunSmape_d1 != null ? Math.max(0, Math.min(1, 1 - crossRunSmape_d1)) : null;
 
     // Cross-run sMAPE for w1
     let crossRunSmape_w1 = null;
@@ -158,6 +187,7 @@ export async function runDailyCron(state, env, batch = 0) {
     const mapeHistory_w1 = crossRunSmape_w1 != null
       ? [...(prev?.w1?.mapeHistory ?? []), crossRunSmape_w1].slice(-10)
       : (prev?.w1?.mapeHistory ?? []);
+    const crossRunAcc_w1 = crossRunSmape_w1 != null ? Math.max(0, Math.min(1, 1 - crossRunSmape_w1)) : null;
 
     console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
 
@@ -168,8 +198,8 @@ export async function runDailyCron(state, env, batch = 0) {
       tvl: Math.round(tvlUsd),
       regDays: days,
       h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: 30 },
-      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy, mapeHistory: mapeHistory_d1, windowDays: d1Win } : (prev?.d1 ?? null),
-      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1.accuracy, mapeHistory: mapeHistory_w1, windowDays: w1Win } : (prev?.w1 ?? null),
+      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy ?? crossRunAcc_d1, mapeHistory: mapeHistory_d1, windowDays: d1Win } : (prev?.d1 ?? null),
+      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1.accuracy ?? crossRunAcc_w1, mapeHistory: mapeHistory_w1, windowDays: w1Win } : (prev?.w1 ?? null),
     };
   })));
   }
