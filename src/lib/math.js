@@ -249,7 +249,7 @@ export function holdoutAccuracy(x, y) {
 
   let sum = 0, count = 0;
   for (let i = 0; i < xTest.length; i++) {
-    if (Math.abs(yTest[i]) < 1e-10) continue;
+    if (Math.abs(yTest[i]) < 1e-6) continue; // skip near-zero returns (stale prices)
     const yPred = beta0 + beta1 * xTest[i];
     sum += Math.abs(yPred - yTest[i]) / Math.abs(yTest[i]);
     count++;

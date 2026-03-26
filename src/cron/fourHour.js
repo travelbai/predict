@@ -91,7 +91,7 @@ export async function runFourHourCron(state, env, batch = 0) {
     }
 
     const h4State = h4
-      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: crossRunAcc ?? h4.accuracy, windowDays: h4Win }
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy ?? crossRunAcc, windowDays: h4Win }
       : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: H4_DEFAULT });
 
     const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);

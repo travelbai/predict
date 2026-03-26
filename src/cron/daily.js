@@ -162,8 +162,8 @@ export async function runDailyCron(state, env, batch = 0) {
       tvl: Math.round(tvlUsd),
       regDays: days,
       h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: 30 },
-      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: crossRunAcc_d1 ?? d1.accuracy, windowDays: d1Win } : (prev?.d1 ?? null),
-      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: crossRunAcc_w1 ?? w1.accuracy, windowDays: w1Win } : (prev?.w1 ?? null),
+      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy ?? crossRunAcc_d1, windowDays: d1Win } : (prev?.d1 ?? null),
+      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1.accuracy ?? crossRunAcc_w1, windowDays: w1Win } : (prev?.w1 ?? null),
     };
   })));
   }
