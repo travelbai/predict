@@ -6,7 +6,7 @@
 //   w1: 180 daily candles aggregated to weekly
 
 import { fetchBinanceKlines } from "../lib/binance.js";
-import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS } from "../lib/taostats.js";
+import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS, BATCH_SIZE } from "../lib/taostats.js";
 import {
   logReturns,
   alignByTimestamp,
@@ -26,8 +26,8 @@ const TAO_DAILY_FETCH = 185;
 const D1_MIN = 30, D1_MAX = 180, D1_DEFAULT = 90;
 const W1_MIN = 90, W1_MAX = 360, W1_DEFAULT = 180;
 
-export async function runDailyCron(state, env) {
-  console.log("[daily] === starting daily regression run ===");
+export async function runDailyCron(state, env, batch = 0) {
+  console.log(`[daily] === starting daily regression run (batch ${batch}) ===`);
   const now = new Date().toISOString();
 
   // ── Step 1: BTC → TAO macro ───────────────────────────────────────────────
@@ -83,8 +83,9 @@ export async function runDailyCron(state, env) {
   // ── Step 2: TAO → Subnets (d1 + w1) ────────────────────────────────────
   console.log("[daily] step 2: subnet regressions (d1 + w1)");
 
-  const subnets = await fetchEligibleSubnets(env);
-  console.log(`[daily] ${subnets.length} subnets fetched`);
+  const allSubnets = await fetchEligibleSubnets(env);
+  const subnets = allSubnets.slice(batch * BATCH_SIZE, (batch + 1) * BATCH_SIZE);
+  console.log(`[daily] batch ${batch}: ${subnets.length} subnets (of ${allSubnets.length} eligible)`);
 
   const allAlphas = { d1: [], w1: [] };
   const subnetMap = Object.fromEntries((state.subnets ?? []).map(s => [s.id, s]));
@@ -92,12 +93,12 @@ export async function runDailyCron(state, env) {
   // TAO/USD price from the last Binance daily candle (needed for TVL conversion)
   const taoUsdPrice = taoDaily[taoDaily.length - 1]?.price ?? 0;
 
-  // Process subnets in parallel batches to avoid Taostats rate-limiting
-  const BATCH = 10;
+  // Process subnets in parallel chunks to avoid Taostats rate-limiting
+  const CHUNK = 10;
   const results = [];
-  for (let i = 0; i < subnets.length; i += BATCH) {
-    const batch = subnets.slice(i, i + BATCH);
-    results.push(...await Promise.allSettled(batch.map(async subnet => {
+  for (let i = 0; i < subnets.length; i += CHUNK) {
+    const chunk = subnets.slice(i, i + CHUNK);
+    results.push(...await Promise.allSettled(chunk.map(async subnet => {
     const prev = subnetMap[subnet.id];
 
     const d1Win = adaptiveWindow(prev?.d1?.mapeHistory, prev?.d1?.windowDays ?? D1_DEFAULT, D1_MIN, D1_MAX);
@@ -190,6 +191,8 @@ export async function runDailyCron(state, env) {
   if (allAlphas.d1.length > 0) state.alphaRanges.d1 = percentileRange(allAlphas.d1, 5, 95);
   if (allAlphas.w1.length > 0) state.alphaRanges.w1 = percentileRange(allAlphas.w1, 5, 95);
 
-  state.subnets = Object.values(subnetMap);
+  // Prune subnets no longer in the full eligible list (not just the current batch)
+  const eligibleIds = new Set(allSubnets.map(s => s.id));
+  state.subnets = Object.values(subnetMap).filter(s => eligibleIds.has(s.id));
   console.log(`[daily] done — ${state.subnets.length} subnets`);
 }

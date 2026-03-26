@@ -8,7 +8,7 @@
 // Both series aligned to daily frequency before regression so frequencies match.
 
 import { fetchBinanceKlines } from "../lib/binance.js";
-import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS } from "../lib/taostats.js";
+import { fetchEligibleSubnets, fetchSubnetHistory, historyDays, MIN_HISTORY_DAYS, BATCH_SIZE } from "../lib/taostats.js";
 import {
   logReturns,
   aggregateToDaily,
@@ -24,8 +24,8 @@ const H4_BARS = 180; // 180 4H bars = 30 days of TAO data
 // Adaptive window bounds (days)
 const H4_MIN = 15, H4_MAX = 60, H4_DEFAULT = 30;
 
-export async function runFourHourCron(state, env) {
-  console.log("[4h] === starting 4H regression run ===");
+export async function runFourHourCron(state, env, batch = 0) {
+  console.log(`[4h] === starting 4H regression run (batch ${batch}) ===`);
 
   // ── Fetch TAO/USDT 4H from Binance ───────────────────────────────────────
   console.log("[4h] fetching TAO/USDT 4H klines (180 bars)");
@@ -39,18 +39,19 @@ export async function runFourHourCron(state, env) {
   const taoUsdPrice = tao4h[tao4h.length - 1]?.price ?? 0;
 
   // ── Subnets ───────────────────────────────────────────────────────────────
-  const subnets = await fetchEligibleSubnets(env);
-  console.log(`[4h] ${subnets.length} subnets`);
+  const allSubnets = await fetchEligibleSubnets(env);
+  const subnets = allSubnets.slice(batch * BATCH_SIZE, (batch + 1) * BATCH_SIZE);
+  console.log(`[4h] batch ${batch}: ${subnets.length} subnets (of ${allSubnets.length} eligible)`);
 
   const subnetMap = Object.fromEntries((state.subnets ?? []).map(s => [s.id, s]));
   const allAlphas = [];
 
-  // Process subnets in parallel batches to avoid Taostats rate-limiting
-  const BATCH = 10;
+  // Process subnets in parallel chunks to avoid Taostats rate-limiting
+  const CHUNK = 10;
   const results = [];
-  for (let i = 0; i < subnets.length; i += BATCH) {
-    const batch = subnets.slice(i, i + BATCH);
-    results.push(...await Promise.allSettled(batch.map(async subnet => {
+  for (let i = 0; i < subnets.length; i += CHUNK) {
+    const chunk = subnets.slice(i, i + CHUNK);
+    results.push(...await Promise.allSettled(chunk.map(async subnet => {
     const prev = subnetMap[subnet.id];
 
     const h4Win = adaptiveWindow(prev?.h4?.mapeHistory, prev?.h4?.windowDays ?? H4_DEFAULT, H4_MIN, H4_MAX);
@@ -117,6 +118,8 @@ export async function runFourHourCron(state, env) {
     state.alphaRanges.h4 = percentileRange(allAlphas, 5, 95);
   }
 
-  state.subnets = Object.values(subnetMap);
+  // Prune subnets no longer in the full eligible list (not just the current batch)
+  const eligibleIds = new Set(allSubnets.map(s => s.id));
+  state.subnets = Object.values(subnetMap).filter(s => eligibleIds.has(s.id));
   console.log(`[4h] done — ${state.subnets.length} subnets`);
 }

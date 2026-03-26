@@ -6,12 +6,28 @@ import { runDailyCron } from "./daily.js";
 import { runFourHourCron } from "./fourHour.js";
 import { MOCK_STATE } from "../mock/dashboardState.js";
 
-export async function handleScheduled(cron, env) {
-  console.log(`[scheduler] triggered: ${cron}`);
+// Maps each cron expression to its job type and batch index.
+// Batch 0 = top 44 by TVL, batch 1 = next 44, batch 2 = remainder.
+const CRON_MAP = {
+  "2 0 * * *":    { type: "daily", batch: 0 },
+  "12 0 * * *":   { type: "daily", batch: 1 },
+  "22 0 * * *":   { type: "daily", batch: 2 },
+  "0 */4 * * *":  { type: "4h",    batch: 0 },
+  "10 */4 * * *": { type: "4h",    batch: 1 },
+  "20 */4 * * *": { type: "4h",    batch: 2 },
+};
 
-  // Diagnostic: write a heartbeat immediately to confirm ctx.waitUntil is executing
+export async function handleScheduled(cron, env) {
+  const job = CRON_MAP[cron];
+  if (!job) {
+    console.warn(`[scheduler] unknown cron expression: ${cron}`);
+    return;
+  }
+  console.log(`[scheduler] triggered: ${cron} → ${job.type} batch ${job.batch}`);
+
+  // Diagnostic heartbeat
   try {
-    await env.KV.put("cron_heartbeat", JSON.stringify({ cron, startedAt: new Date().toISOString() }));
+    await env.KV.put("cron_heartbeat", JSON.stringify({ cron, type: job.type, batch: job.batch, startedAt: new Date().toISOString() }));
   } catch (e) {
     console.error(`[scheduler] heartbeat KV write failed: ${e.message}`);
   }
@@ -19,13 +35,10 @@ export async function handleScheduled(cron, env) {
   let state = await loadState(env);
 
   try {
-    if (cron === "0 0 * * *") {
-      await runDailyCron(state, env);
-    } else if (cron === "0 */4 * * *") {
-      await runFourHourCron(state, env);
+    if (job.type === "daily") {
+      await runDailyCron(state, env, job.batch);
     } else {
-      console.warn(`[scheduler] unknown cron expression: ${cron}`);
-      return;
+      await runFourHourCron(state, env, job.batch);
     }
 
     state.status = "ok";

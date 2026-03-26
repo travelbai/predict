@@ -36,8 +36,8 @@ export default {
 
     // DEBUG routes — remove after testing
     if (url.pathname === "/api/run-daily") {
-      ctx.waitUntil(handleScheduled("0 0 * * *", env));
-      return json({ status: "started", cron: "0 0 * * *" });
+      ctx.waitUntil(handleScheduled("2 0 * * *", env));
+      return json({ status: "started", cron: "2 0 * * *" });
     }
     if (url.pathname === "/api/run-4h") {
       ctx.waitUntil(handleScheduled("0 */4 * * *", env));
