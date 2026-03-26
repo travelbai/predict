@@ -101,7 +101,7 @@ async function handleAccuracyProbe(period, env) {
     for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
       const x = taoSlice[j];
       const y = subnetUsdtReturns[j];
-      if (Number.isFinite(x) && Number.isFinite(y) && Math.abs(y) >= 1e-10) {
+      if (Number.isFinite(x) && Number.isFinite(y)) {
         xActual = x; yActual = y; foundIdx = j;
         break;
       }
@@ -119,16 +119,17 @@ async function handleAccuracyProbe(period, env) {
     const beta0Old = prev[period].beta0;
     const beta1Old = prev[period].beta1;
     const yPredicted = beta0Old + beta1Old * xActual;
-    const mape = Math.abs(yPredicted - yActual) / Math.abs(yActual);
-    const accuracy = Math.max(0, Math.min(1, 1 - mape));
+    const denom = (Math.abs(yPredicted) + Math.abs(yActual)) / 2;
+    const smape = denom < 1e-10 ? 0 : Math.abs(yPredicted - yActual) / denom;
+    const accuracy = Math.max(0, Math.min(1, 1 - smape));
 
     return {
       subnetId: prev.id, symbol: prev.symbol, period,
       beta0Old, beta1Old,
       xActual, yActual, yPredicted,
-      mape, accuracy,
+      smape, accuracy,
       foundIdx, seriesLen: subnetUsdtReturns.length,
-      note: "cross-run: prev betas vs latest actual data point",
+      note: "cross-run: prev betas vs latest actual data point (sMAPE)",
     };
   } catch (err) {
     return { error: err.message };

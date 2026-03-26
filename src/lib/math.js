@@ -220,10 +220,9 @@ export function computeAlphaRange(alphas) {
  * Returns null if yActual ≈ 0 (prevents division by zero).
  */
 export function computeAccuracy(beta0Old, beta1Old, xActual, yActual) {
-  if (Math.abs(yActual) < 1e-10) return null;
   const yPred = beta0Old + beta1Old * xActual;
-  const mape = Math.abs(yPred - yActual) / Math.abs(yActual);
-  return Math.max(0, Math.min(1, 1 - mape));
+  const smape = symmetricMAPE(yPred, yActual);
+  return Math.max(0, Math.min(1, 1 - smape));
 }
 
 /**
@@ -249,9 +248,8 @@ export function holdoutAccuracy(x, y) {
 
   let sum = 0, count = 0;
   for (let i = 0; i < xTest.length; i++) {
-    if (Math.abs(yTest[i]) < 1e-6) continue; // skip near-zero returns (stale prices)
     const yPred = beta0 + beta1 * xTest[i];
-    sum += Math.abs(yPred - yTest[i]) / Math.abs(yTest[i]);
+    sum += symmetricMAPE(yPred, yTest[i]);
     count++;
   }
 
@@ -293,6 +291,16 @@ export function adaptiveWindow(mapeHistory, currentWindow, min, max) {
 
 function mean(arr) {
   return arr.reduce((s, v) => s + v, 0) / arr.length;
+}
+
+/**
+ * Symmetric MAPE: |pred - actual| / ((|pred| + |actual|) / 2)
+ * Returns 0 when both are zero (perfect prediction), range [0, 2].
+ */
+function symmetricMAPE(pred, actual) {
+  const denom = (Math.abs(pred) + Math.abs(actual)) / 2;
+  if (denom < 1e-10) return 0; // both ≈ 0 → perfect
+  return Math.abs(pred - actual) / denom;
 }
 
 /**

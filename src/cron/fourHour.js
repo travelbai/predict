@@ -81,10 +81,11 @@ export async function runFourHourCron(state, env, batch = 0) {
       for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
         const xA = taoSlice[j];
         const yA = subnetUsdtReturns[j];
-        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+        if (Number.isFinite(xA) && Number.isFinite(yA)) {
           const yPred = prev.h4.beta0 + prev.h4.beta1 * xA;
-          const mape = Math.abs(yPred - yA) / Math.abs(yA);
-          crossRunAcc = Math.max(0, Math.min(1, 1 - mape));
+          const denom = (Math.abs(yPred) + Math.abs(yA)) / 2;
+          const smape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
+          crossRunAcc = Math.max(0, Math.min(1, 1 - smape));
           break;
         }
       }

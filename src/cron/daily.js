@@ -129,10 +129,11 @@ export async function runDailyCron(state, env, batch = 0) {
       for (let j = subnetUsdtReturns_d1.length - 1; j >= 0; j--) {
         const xA = taoSlice_d1[j];
         const yA = subnetUsdtReturns_d1[j];
-        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+        if (Number.isFinite(xA) && Number.isFinite(yA)) {
           const yPred = prev.d1.beta0 + prev.d1.beta1 * xA;
-          const mape = Math.abs(yPred - yA) / Math.abs(yA);
-          crossRunAcc_d1 = Math.max(0, Math.min(1, 1 - mape));
+          const denom = (Math.abs(yPred) + Math.abs(yA)) / 2;
+          const smape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
+          crossRunAcc_d1 = Math.max(0, Math.min(1, 1 - smape));
           break;
         }
       }
@@ -144,10 +145,11 @@ export async function runDailyCron(state, env, batch = 0) {
       for (let j = subnetUsdtReturns_w1.length - 1; j >= 0; j--) {
         const xA = taoSlice_w1[j];
         const yA = subnetUsdtReturns_w1[j];
-        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+        if (Number.isFinite(xA) && Number.isFinite(yA)) {
           const yPred = prev.w1.beta0 + prev.w1.beta1 * xA;
-          const mape = Math.abs(yPred - yA) / Math.abs(yA);
-          crossRunAcc_w1 = Math.max(0, Math.min(1, 1 - mape));
+          const denom = (Math.abs(yPred) + Math.abs(yA)) / 2;
+          const smape = denom < 1e-10 ? 0 : Math.abs(yPred - yA) / denom;
+          crossRunAcc_w1 = Math.max(0, Math.min(1, 1 - smape));
           break;
         }
       }
