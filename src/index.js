@@ -40,6 +40,14 @@ export default {
       const debug = await handleAccuracyProbe("d1", env);
       return json({ status: "cron_started", accuracyProbe: debug });
     }
+    if (url.pathname === "/api/run-daily-1") {
+      ctx.waitUntil(handleScheduled("20 2 * * *", env));
+      return json({ status: "cron_started", batch: 1 });
+    }
+    if (url.pathname === "/api/run-daily-2") {
+      ctx.waitUntil(handleScheduled("40 2 * * *", env));
+      return json({ status: "cron_started", batch: 2 });
+    }
     if (url.pathname === "/api/run-4h") {
       ctx.waitUntil(handleScheduled("0 */4 * * *", env));
       return json({ status: "started", cron: "0 */4 * * *" });
