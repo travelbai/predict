@@ -14,7 +14,6 @@ import {
   aggregateToDaily,
   linearRegressionPipeline,
   percentileRange,
-  computeAccuracy,
   zeroVolumeRatio,
   adaptiveWindow,
 } from "../lib/math.js";
@@ -76,23 +75,9 @@ export async function runFourHourCron(state, env, batch = 0) {
 
     const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
-    // Cross-run single-point accuracy: old β predicts latest actual data point
-    let h4Acc = null;
-    let h4Mape = prev?.h4?.mapeHistory ?? [];
-    if (prev?.h4?.beta0 != null) {
-      // Find the last index where both series have a finite value
-      const lastIdx = subnetUsdtReturns.length - 1;
-      const xA = taoSlice[lastIdx];
-      const yA = subnetUsdtReturns[lastIdx];
-      if (Number.isFinite(xA) && Number.isFinite(yA)) {
-        h4Acc = computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA);
-        if (h4Acc !== null) h4Mape = [...h4Mape.slice(-4), 1 - h4Acc];
-      }
-    }
-
     const h4State = h4
-      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4Acc, mapeHistory: h4Mape, windowDays: h4Win }
-      : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy, windowDays: h4Win }
+      : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: H4_DEFAULT });
 
     const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);
     console.log(`[4h] SN${subnet.id} ${subnet.symbol} win=${h4Win}d R²=${h4?.r2?.toFixed(2) ?? "n/a"}`);

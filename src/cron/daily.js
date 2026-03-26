@@ -13,7 +13,6 @@ import {
   linearRegressionPipeline,
   aggregateToWeekly,
   percentileRange,
-  computeAccuracy,
   zeroVolumeRatio,
   adaptiveWindow,
 } from "../lib/math.js";
@@ -43,19 +42,6 @@ export async function runDailyCron(state, env, batch = 0) {
   const btcReturns = logReturns(btcPrices);
   const taoWeeklyReturns = logReturns(taoPrices);
 
-  // Cross-run single-point accuracy for BTC→TAO
-  let btcTaoAccuracy = null;
-  let btcTaoMapeHistory = state.btcTao?.mapeHistory ?? [];
-  if (state.btcTao?.beta0 != null) {
-    const xA = btcReturns[btcReturns.length - 1];
-    const yA = taoWeeklyReturns[taoWeeklyReturns.length - 1];
-    if (Number.isFinite(xA) && Number.isFinite(yA)) {
-      btcTaoAccuracy = computeAccuracy(state.btcTao.beta0, state.btcTao.beta1, xA, yA);
-      if (btcTaoAccuracy !== null)
-        btcTaoMapeHistory = [...btcTaoMapeHistory.slice(-4), 1 - btcTaoAccuracy];
-    }
-  }
-
   const btcTaoResult = linearRegressionPipeline(btcReturns, taoWeeklyReturns);
   if (!btcTaoResult) throw new Error("BTC→TAO: insufficient clean samples");
 
@@ -63,8 +49,7 @@ export async function runDailyCron(state, env, batch = 0) {
     beta0: btcTaoResult.beta0,
     beta1: btcTaoResult.beta1,
     r2: btcTaoResult.r2,
-    accuracy: btcTaoAccuracy,
-    mapeHistory: btcTaoMapeHistory,
+    accuracy: btcTaoResult.accuracy,
     windowDays: 360,
     window: "360d / 52w",
     sampleCount: btcTaoResult.sampleCount,
@@ -138,30 +123,6 @@ export async function runDailyCron(state, env, batch = 0) {
     );
     const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
 
-    // Cross-run single-point accuracy: old β predicts latest actual data point
-    let d1Acc = null, w1Acc = null;
-    let d1Mape = prev?.d1?.mapeHistory ?? [];
-    let w1Mape = prev?.w1?.mapeHistory ?? [];
-
-    if (prev?.d1?.beta0 != null) {
-      const lastIdx = subnetUsdtReturns_d1.length - 1;
-      const xA = taoSlice_d1[lastIdx];
-      const yA = subnetUsdtReturns_d1[lastIdx];
-      if (Number.isFinite(xA) && Number.isFinite(yA)) {
-        d1Acc = computeAccuracy(prev.d1.beta0, prev.d1.beta1, xA, yA);
-        if (d1Acc !== null) d1Mape = [...d1Mape.slice(-4), 1 - d1Acc];
-      }
-    }
-    if (prev?.w1?.beta0 != null) {
-      const lastIdx = subnetUsdtReturns_w1.length - 1;
-      const xA = taoSlice_w1[lastIdx];
-      const yA = subnetUsdtReturns_w1[lastIdx];
-      if (Number.isFinite(xA) && Number.isFinite(yA)) {
-        w1Acc = computeAccuracy(prev.w1.beta0, prev.w1.beta1, xA, yA);
-        if (w1Acc !== null) w1Mape = [...w1Mape.slice(-4), 1 - w1Acc];
-      }
-    }
-
     console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
 
     return {
@@ -170,9 +131,9 @@ export async function runDailyCron(state, env, batch = 0) {
       name: subnet.name,
       tvl: Math.round(tvlUsd),
       regDays: days,
-      h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: 30 },
-      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1Acc, mapeHistory: d1Mape, windowDays: d1Win } : (prev?.d1 ?? null),
-      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1Acc, mapeHistory: w1Mape, windowDays: w1Win } : (prev?.w1 ?? null),
+      h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: 30 },
+      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy, windowDays: d1Win } : (prev?.d1 ?? null),
+      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1.accuracy, windowDays: w1Win } : (prev?.w1 ?? null),
     };
   })));
   }

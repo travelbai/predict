@@ -163,7 +163,7 @@ export function linearRegression(x, y) {
 export function linearRegressionPipeline(xArr, yArr) {
   const { x, y } = iqrFilter(xArr, yArr);
   if (x.length < 5) return null;
-  return { ...linearRegression(x, y), sampleCount: x.length };
+  return { ...linearRegression(x, y), sampleCount: x.length, accuracy: holdoutAccuracy(x, y) };
 }
 
 // ── Weekly aggregation ────────────────────────────────────────────────────────
