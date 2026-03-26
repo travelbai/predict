@@ -75,8 +75,23 @@ export async function runFourHourCron(state, env, batch = 0) {
 
     const h4 = linearRegressionPipeline(taoSlice, subnetUsdtReturns);
 
+    // Cross-run accuracy: prev betas predict latest valid actual data point
+    let crossRunAcc = null;
+    if (prev?.h4?.beta0 != null) {
+      for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
+        const xA = taoSlice[j];
+        const yA = subnetUsdtReturns[j];
+        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+          const yPred = prev.h4.beta0 + prev.h4.beta1 * xA;
+          const mape = Math.abs(yPred - yA) / Math.abs(yA);
+          crossRunAcc = Math.max(0, Math.min(1, 1 - mape));
+          break;
+        }
+      }
+    }
+
     const h4State = h4
-      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy, windowDays: h4Win }
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: crossRunAcc ?? h4.accuracy, windowDays: h4Win }
       : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: H4_DEFAULT });
 
     const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);

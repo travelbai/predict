@@ -37,7 +37,8 @@ export default {
     // DEBUG routes — remove after testing
     if (url.pathname === "/api/run-daily") {
       ctx.waitUntil(handleScheduled("2 0 * * *", env));
-      return json({ status: "started", cron: "2 0 * * *" });
+      const debug = await handleAccuracyProbe("d1", env);
+      return json({ status: "cron_started", accuracyProbe: debug });
     }
     if (url.pathname === "/api/run-4h") {
       ctx.waitUntil(handleScheduled("0 */4 * * *", env));
@@ -69,50 +70,73 @@ export default {
   },
 };
 
-async function handleDebugAccuracy(subnetId, env) {
+// Synchronous accuracy probe — computes cross-run accuracy step by step for
+// the first subnet that has previous betas stored. Returns raw diagnostics so
+// the full calculation is visible in the browser.
+async function handleAccuracyProbe(period, env) {
   try {
     const raw = await env.KV.get("dashboard_state");
     const state = raw ? JSON.parse(raw) : MOCK_STATE;
-    const prev = (state.subnets ?? []).find(s => s.id === subnetId);
-    if (!prev) return json({ error: `subnet ${subnetId} not found in KV` });
 
-    const tao4h = await fetchBinanceKlines("TAOUSDT", "4h", 180);
-    const taoDaily = aggregateToDaily(tao4h);
-    const taoReturns = logReturns(taoDaily.map(k => k.price));
+    // Find first subnet that has previous betas for the requested period
+    const prev = (state.subnets ?? []).find(s => s[period]?.beta0 != null);
+    if (!prev) return { error: `no subnet with previous ${period} betas in KV` };
 
-    const h4Win = prev.h4?.windowDays ?? 30;
-    const history = await fetchSubnetHistory(subnetId, h4Win + 5, env);
-    const recentH4 = history.slice(-h4Win);
-    const subnetTaoReturns = logReturns(recentH4.map(k => k.price));
-    const taoSlice = taoReturns.slice(-subnetTaoReturns.length);
+    // Fetch TAO price data
+    const taoDaily = await fetchBinanceKlines("TAOUSDT", "1d", 185);
+    const taoDailyReturns = logReturns(taoDaily.map(d => d.price));
+
+    // Fetch subnet history
+    const win = prev[period].windowDays ?? 90;
+    const history = await fetchSubnetHistory(prev.id, win + 5, env);
+    const recent = history.slice(-win);
+    const subnetTaoReturns = logReturns(recent.map(k => k.price));
+    const taoSlice = taoDailyReturns.slice(-subnetTaoReturns.length);
     const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
       r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
     );
 
-    const lastIdx = subnetUsdtReturns.length - 1;
-    const xA = taoSlice[lastIdx];
-    const yA = subnetUsdtReturns[lastIdx];
+    // Search from end for last valid (finite, non-zero) data point
+    let xActual = null, yActual = null, foundIdx = -1;
+    for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
+      const x = taoSlice[j];
+      const y = subnetUsdtReturns[j];
+      if (Number.isFinite(x) && Number.isFinite(y) && Math.abs(y) >= 1e-10) {
+        xActual = x; yActual = y; foundIdx = j;
+        break;
+      }
+    }
 
-    return json({
-      subnetId,
-      prevBeta0: prev.h4?.beta0,
-      prevBeta1: prev.h4?.beta1,
-      taoReturnsLen: taoReturns.length,
-      subnetTaoReturnsLen: subnetTaoReturns.length,
-      taoSliceLen: taoSlice.length,
-      lastIdx,
-      xA,
-      yA,
-      xA_isFinite: Number.isFinite(xA),
-      yA_isFinite: Number.isFinite(yA),
-      yA_absLt1e10: Math.abs(yA) < 1e-10,
-      accuracy: (Number.isFinite(xA) && Number.isFinite(yA))
-        ? computeAccuracy(prev.h4.beta0, prev.h4.beta1, xA, yA)
-        : "skipped",
-    });
+    if (xActual === null) {
+      return {
+        subnetId: prev.id, symbol: prev.symbol, period,
+        error: "no valid data point found",
+        seriesLen: subnetUsdtReturns.length,
+        nullOrNaNCount: subnetUsdtReturns.filter(v => !Number.isFinite(v)).length,
+      };
+    }
+
+    const beta0Old = prev[period].beta0;
+    const beta1Old = prev[period].beta1;
+    const yPredicted = beta0Old + beta1Old * xActual;
+    const mape = Math.abs(yPredicted - yActual) / Math.abs(yActual);
+    const accuracy = Math.max(0, Math.min(1, 1 - mape));
+
+    return {
+      subnetId: prev.id, symbol: prev.symbol, period,
+      beta0Old, beta1Old,
+      xActual, yActual, yPredicted,
+      mape, accuracy,
+      foundIdx, seriesLen: subnetUsdtReturns.length,
+      note: "cross-run: prev betas vs latest actual data point",
+    };
   } catch (err) {
-    return json({ error: err.message });
+    return { error: err.message };
   }
+}
+
+async function handleDebugAccuracy(subnetId, env) {
+  return json(await handleAccuracyProbe("h4", env));
 }
 
 async function handleDashboard(env) {

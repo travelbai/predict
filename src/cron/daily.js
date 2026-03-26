@@ -123,6 +123,36 @@ export async function runDailyCron(state, env, batch = 0) {
     );
     const w1 = linearRegressionPipeline(taoSlice_w1, subnetUsdtReturns_w1);
 
+    // Cross-run accuracy for d1: prev betas predict latest valid actual data point
+    let crossRunAcc_d1 = null;
+    if (prev?.d1?.beta0 != null) {
+      for (let j = subnetUsdtReturns_d1.length - 1; j >= 0; j--) {
+        const xA = taoSlice_d1[j];
+        const yA = subnetUsdtReturns_d1[j];
+        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+          const yPred = prev.d1.beta0 + prev.d1.beta1 * xA;
+          const mape = Math.abs(yPred - yA) / Math.abs(yA);
+          crossRunAcc_d1 = Math.max(0, Math.min(1, 1 - mape));
+          break;
+        }
+      }
+    }
+
+    // Cross-run accuracy for w1
+    let crossRunAcc_w1 = null;
+    if (prev?.w1?.beta0 != null) {
+      for (let j = subnetUsdtReturns_w1.length - 1; j >= 0; j--) {
+        const xA = taoSlice_w1[j];
+        const yA = subnetUsdtReturns_w1[j];
+        if (Number.isFinite(xA) && Number.isFinite(yA) && Math.abs(yA) >= 1e-10) {
+          const yPred = prev.w1.beta0 + prev.w1.beta1 * xA;
+          const mape = Math.abs(yPred - yA) / Math.abs(yA);
+          crossRunAcc_w1 = Math.max(0, Math.min(1, 1 - mape));
+          break;
+        }
+      }
+    }
+
     console.log(`[daily] SN${subnet.id} ${subnet.symbol} d1(${d1Win}d) R²=${d1?.r2?.toFixed(2) ?? "n/a"} w1(${w1Win}d) R²=${w1?.r2?.toFixed(2) ?? "n/a"}`);
 
     return {
@@ -132,8 +162,8 @@ export async function runDailyCron(state, env, batch = 0) {
       tvl: Math.round(tvlUsd),
       regDays: days,
       h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: 30 },
-      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy, windowDays: d1Win } : (prev?.d1 ?? null),
-      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: w1.accuracy, windowDays: w1Win } : (prev?.w1 ?? null),
+      d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: crossRunAcc_d1 ?? d1.accuracy, windowDays: d1Win } : (prev?.d1 ?? null),
+      w1: w1 ? { beta0: w1.beta0, beta1: w1.beta1, r2: w1.r2, accuracy: crossRunAcc_w1 ?? w1.accuracy, windowDays: w1Win } : (prev?.w1 ?? null),
     };
   })));
   }
