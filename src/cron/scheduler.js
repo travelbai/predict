@@ -13,8 +13,7 @@ const CRON_MAP = {
   "20 2 * * *":   { type: "daily", batch: 1 },
   "40 2 * * *":   { type: "daily", batch: 2 },
   "0 */4 * * *":  { type: "4h",    batch: 0 },
-  "20 */4 * * *": { type: "4h",    batch: 1 },
-  "40 */4 * * *": { type: "4h",    batch: 2 },
+  "30 */4 * * *": { type: "4h",    batch: 1 },
 };
 
 export async function handleScheduled(cron, env) {
