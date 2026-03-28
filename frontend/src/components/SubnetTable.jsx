@@ -6,6 +6,16 @@ const PERIODS = ["4H", "24H", "1W"];
 const PK = { "4H": "h4", "24H": "d1", "1W": "w1" };
 const fmt = (n, d = 2) => (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
 
+// Column widths — shared between header and body tables so columns stay aligned
+const COLS = [
+  { key: "id",        label: "Subnet",      width: "22%", left: true },
+  { key: "beta1",     label: "Coefficient",  width: "16%" },
+  { key: "beta0",     label: "Alpha",        width: "14%" },
+  { key: "r2",        label: "R²",           width: "12%" },
+  { key: "predicted", label: "Predict",      width: "18%" },
+  { key: "accuracy",  label: "Accuracy",     width: "18%" },
+];
+
 function r2Color(r2) {
   if (r2 > 0.5) return C.green;
   if (r2 >= 0.3) return C.yellow;
@@ -19,46 +29,18 @@ function accuracyColor(acc) {
   return C.red;
 }
 
-function TH({ label, sortKey, currentSort, onSort, left }) {
-  const active = currentSort.key === sortKey;
+function ColGroup() {
   return (
-    <th
-      onClick={() => onSort(sortKey)}
-      style={{
-        padding: "14px 18px",
-        textAlign: left ? "left" : "center",
-        verticalAlign: "middle",
-        cursor: "pointer",
-        userSelect: "none",
-        fontFamily: "var(--sans)",
-        fontSize: 12,
-        fontWeight: 600,
-        color: active ? C.text : C.t2,
-        letterSpacing: 0.5,
-        textTransform: "uppercase",
-        borderBottom: `2px solid ${C.border}`,
-        whiteSpace: "nowrap",
-        position: "sticky",
-        top: 0,
-        zIndex: 2,
-        background: "#fff",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.04)",
-      }}
-    >
-      {label}
-      {active && (
-        <span style={{ marginLeft: 4, fontSize: 11 }}>
-          {currentSort.asc ? "↑" : "↓"}
-        </span>
-      )}
-    </th>
+    <colgroup>
+      {COLS.map(c => <col key={c.key} style={{ width: c.width }} />)}
+    </colgroup>
   );
 }
 
 export default function SubnetTable({ subnets, alphaRanges }) {
   const [slider, setSlider] = useState(0);
   const [period, setPeriod] = useState("4H");
-  const [sort, setSort] = useState({ key: "predicted", asc: false });
+  const [sort, setSort] = useState({ key: "id", asc: true });
   const [hideLow, setHideLow] = useState(true);
 
   const pk = PK[period];
@@ -92,7 +74,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
     setSort(prev => prev.key === key ? { key, asc: !prev.asc } : { key, asc: false });
   }
 
-  const thProps = { currentSort: sort, onSort: handleSort };
+  const tableStyle = { width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontFamily: "var(--mono)", fontSize: 13 };
 
   return (
     <div className="card">
@@ -130,57 +112,93 @@ export default function SubnetTable({ subnets, alphaRanges }) {
         label="If $TAO moves by [ X ]%, how do subnets react?"
       />
 
-      <div className="table-wrap" style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh", marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}` }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--mono)", fontSize: 13 }}>
+      {/* ── Table: fixed header + scrollable body ─────────────── */}
+      <div style={{ marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+        {/* Header table — always visible, never scrolls */}
+        <table style={tableStyle}>
+          <ColGroup />
           <thead>
             <tr>
-              <TH label="Subnet"      sortKey="id"        {...thProps} left />
-              <TH label="Coefficient" sortKey="beta1"     {...thProps} />
-              <TH label="Alpha"       sortKey="beta0"     {...thProps} />
-              <TH label="R²"          sortKey="r2"        {...thProps} />
-              <TH label="Predict"     sortKey="predicted" {...thProps} />
-              <TH label="Accuracy"   sortKey="accuracy"  {...thProps} />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => {
-              const negPred = r.predicted < 0;
-              const dim = r.r2 < 0.3;
-              return (
-                <tr key={r.id} className="trow" style={{ opacity: dim ? 0.35 : 1 }}>
-                  <td className="td" style={{ fontFamily: "var(--sans)" }}>
-                    <span style={{ color: C.t3, marginRight: 6 }}>SN{r.id}</span>
-                    {r.symbol}
-                    {r.lowLiq && (
-                      <span style={{ marginLeft: 8, fontSize: 9, color: C.red, background: C.redBg, borderRadius: 4, padding: "2px 5px" }}>
-                        LOW LIQ
+              {COLS.map(col => {
+                const active = sort.key === col.key;
+                return (
+                  <th
+                    key={col.key}
+                    onClick={() => handleSort(col.key)}
+                    style={{
+                      padding: "14px 18px",
+                      textAlign: col.left ? "left" : "center",
+                      verticalAlign: "middle",
+                      cursor: "pointer",
+                      userSelect: "none",
+                      fontFamily: "var(--sans)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: active ? C.text : C.t2,
+                      letterSpacing: 0.5,
+                      textTransform: "uppercase",
+                      borderBottom: `2px solid ${C.border}`,
+                      whiteSpace: "nowrap",
+                      background: "#fff",
+                    }}
+                  >
+                    {col.label}
+                    {active && (
+                      <span style={{ marginLeft: 4, fontSize: 11 }}>
+                        {sort.asc ? "↑" : "↓"}
                       </span>
                     )}
-                  </td>
-                  <td className="td tc" style={{ color: r.beta1 > 2 ? C.yellow : C.text }}>
-                    {r.beta1.toFixed(2)}
-                  </td>
-                  <td className="td tc" style={{ color: r.beta0 >= 0 ? C.green : C.red }}>
-                    {r.beta0 >= 0 ? "+" : ""}{(r.beta0 * 100).toFixed(2)}%
-                  </td>
-                  <td className="td tc" style={{ color: r2Color(r.r2) }}>
-                    {r.r2.toFixed(2)}
-                  </td>
-                  <td className="td tc">
-                    <span style={{ fontSize: 14, color: negPred ? C.red : C.green }}>
-                      {fmt(r.predicted, 2)}
-                    </span>
-                  </td>
-                  <td className="td tc" style={{ color: accuracyColor(r.accuracy) }}>
-                    {r.accuracy !== null && r.accuracy !== undefined
-                      ? `${(r.accuracy * 100).toFixed(1)}%`
-                      : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
         </table>
+
+        {/* Body table — scrollable area, scrollbar stays here */}
+        <div className="table-body" style={{ maxHeight: "65vh", overflowY: "auto", overflowX: "hidden" }}>
+          <table style={tableStyle}>
+            <ColGroup />
+            <tbody>
+              {rows.map(r => {
+                const negPred = r.predicted < 0;
+                const dim = r.r2 < 0.3;
+                return (
+                  <tr key={r.id} className="trow" style={{ opacity: dim ? 0.35 : 1 }}>
+                    <td className="td" style={{ fontFamily: "var(--sans)" }}>
+                      <span style={{ color: C.t3, marginRight: 6 }}>SN{r.id}</span>
+                      {r.symbol}
+                      {r.lowLiq && (
+                        <span style={{ marginLeft: 8, fontSize: 9, color: C.red, background: C.redBg, borderRadius: 4, padding: "2px 5px" }}>
+                          LOW LIQ
+                        </span>
+                      )}
+                    </td>
+                    <td className="td tc" style={{ color: r.beta1 > 2 ? C.yellow : C.text }}>
+                      {r.beta1.toFixed(2)}
+                    </td>
+                    <td className="td tc" style={{ color: r.beta0 >= 0 ? C.green : C.red }}>
+                      {r.beta0 >= 0 ? "+" : ""}{(r.beta0 * 100).toFixed(2)}%
+                    </td>
+                    <td className="td tc" style={{ color: r2Color(r.r2) }}>
+                      {r.r2.toFixed(2)}
+                    </td>
+                    <td className="td tc">
+                      <span style={{ fontSize: 14, color: negPred ? C.red : C.green }}>
+                        {fmt(r.predicted, 2)}
+                      </span>
+                    </td>
+                    <td className="td tc" style={{ color: accuracyColor(r.accuracy) }}>
+                      {r.accuracy !== null && r.accuracy !== undefined
+                        ? `${(r.accuracy * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {!hideLow && (
