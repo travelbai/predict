@@ -25,27 +25,28 @@ function TH({ label, sortKey, currentSort, onSort, left }) {
     <th
       onClick={() => onSort(sortKey)}
       style={{
-        padding: "12px 14px",
+        padding: "14px 18px",
         textAlign: left ? "left" : "center",
         verticalAlign: "middle",
         cursor: "pointer",
         userSelect: "none",
-        fontSize: 11,
-        fontWeight: 500,
-        color: active ? C.text : C.t3,
-        letterSpacing: 0.3,
+        fontFamily: "var(--sans)",
+        fontSize: 12,
+        fontWeight: 600,
+        color: active ? C.text : C.t2,
+        letterSpacing: 0.5,
         textTransform: "uppercase",
-        borderBottom: `1px solid ${C.border}`,
+        borderBottom: `2px solid ${C.border}`,
         whiteSpace: "nowrap",
         position: "sticky",
         top: 0,
         zIndex: 2,
-        background: "#fff",
+        background: "#fafafa",
       }}
     >
       {label}
       {active && (
-        <span style={{ position: "absolute", marginLeft: 3, fontSize: 10 }}>
+        <span style={{ marginLeft: 4, fontSize: 11 }}>
           {currentSort.asc ? "↑" : "↓"}
         </span>
       )}
