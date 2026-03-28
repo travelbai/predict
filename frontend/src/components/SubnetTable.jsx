@@ -41,7 +41,8 @@ function TH({ label, sortKey, currentSort, onSort, left }) {
         position: "sticky",
         top: 0,
         zIndex: 2,
-        background: "#fafafa",
+        background: "#fff",
+        boxShadow: "0 2px 4px rgba(0,0,0,0.04)",
       }}
     >
       {label}
@@ -129,7 +130,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
         label="If $TAO moves by [ X ]%, how do subnets react?"
       />
 
-      <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh", marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}` }}>
+      <div className="table-wrap" style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh", marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}` }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--mono)", fontSize: 13 }}>
           <thead>
             <tr>

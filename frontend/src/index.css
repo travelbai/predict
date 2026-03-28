@@ -73,11 +73,11 @@ body {
 }
 
 .trow {
-  transition: background 0.1s;
+  transition: background 0.15s;
 }
 
 .trow:hover {
-  background: #fafafa !important;
+  background: #f0fdf4 !important;
 }
 
 /* ── Slider buttons ──────────────────────────────────────── */
@@ -182,15 +182,28 @@ body {
   height: 0;
 }
 
-/* ── Scrollbar ───────────────────────────────────────────── */
+/* ── Table scrollbar ─────────────────────────────────────── */
 
-::-webkit-scrollbar {
+.table-wrap {
+  scrollbar-gutter: stable;
+}
+
+.table-wrap::-webkit-scrollbar {
+  width: 6px;
   height: 3px;
 }
 
-::-webkit-scrollbar-thumb {
+.table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
   background: #ddd;
-  border-radius: 2px;
+  border-radius: 3px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover {
+  background: #bbb;
 }
 
 /* ── Stale banner ────────────────────────────────────────── */
