@@ -20,23 +20,49 @@ const MIN_HISTORY_DAYS = 14;
  * @returns {{ id, symbol, name, tvlTao, regDays }[]}
  */
 // Subnets per batch — keeps subrequests under Cloudflare's 50-per-invocation cap.
-// Budget per batch: 3 Binance + 1 subnet list + 44 histories = 48 total.
+// Budget per batch: 3 Binance + 1 pool list + 1 identity + 44 histories = 49 total.
 export const BATCH_SIZE = 44;
 
 export async function fetchEligibleSubnets(env) {
-  const data = await get("/api/dtao/pool/v1", { limit: 256 }, env);
-  const subnets = data.data ?? [];
+  // Fetch pool data and subnet identities in parallel
+  const [poolData, identityData] = await Promise.all([
+    get("/api/dtao/pool/v1", { limit: 256 }, env),
+    get("/api/subnet/identity/v1", { limit: 256 }, env).catch(err => {
+      console.warn(`[taostats] identity fetch failed, using pool names: ${err.message}`);
+      return { data: [] };
+    }),
+  ]);
+
+  // Build netuid → identity map for name/symbol lookup
+  const identityMap = new Map();
+  for (const s of (identityData.data ?? [])) {
+    const id = s.netuid ?? s.subnet_id;
+    if (id != null) {
+      identityMap.set(id, {
+        name: s.subnet_name || s.name || "",
+        symbol: s.token_symbol || s.symbol || "",
+      });
+    }
+  }
+
+  const subnets = poolData.data ?? [];
 
   return subnets
     .filter(s => s.netuid !== 0) // skip root subnet
-    .map(s => ({
-      id: s.netuid,
-      symbol: (s.name || `SN${s.netuid}`).trim(),
-      name: s.name || `SN${s.netuid}`,
-      tvlTao: Number(s.total_tao) / 1e9,
-      regDays: null,
-    }))
-    .sort((a, b) => b.tvlTao - a.tvlTao); // highest TVL first, no slice — batching handled by callers
+    .map(s => {
+      const identity = identityMap.get(s.netuid);
+      // Prefer identity API names, fall back to pool data, then generic
+      const name = identity?.name || s.subnet_name || s.name || `SN${s.netuid}`;
+      const symbol = identity?.symbol || s.token_symbol || s.symbol || name;
+      return {
+        id: s.netuid,
+        symbol: symbol.trim(),
+        name: name.trim(),
+        tvlTao: Number(s.total_tao) / 1e9,
+        regDays: null,
+      };
+    })
+    .sort((a, b) => b.tvlTao - a.tvlTao);
 }
 
 /**

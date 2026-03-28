@@ -61,6 +61,11 @@ export default {
           return json({ error: err.message });
         }
       }
+      if (url.pathname === "/api/debug/subnets") {
+        const { fetchEligibleSubnets } = await import("./lib/taostats.js");
+        const subnets = await fetchEligibleSubnets(env);
+        return json(subnets.slice(0, 10));
+      }
     }
 
     return new Response("Not Found", { status: 404 });
