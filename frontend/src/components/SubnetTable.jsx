@@ -37,7 +37,9 @@ function TH({ label, sortKey, currentSort, onSort, left }) {
         textTransform: "uppercase",
         borderBottom: `1px solid ${C.border}`,
         whiteSpace: "nowrap",
-        position: "relative",
+        position: "sticky",
+        top: 0,
+        zIndex: 2,
         background: "#fff",
       }}
     >
@@ -126,7 +128,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
         label="If $TAO moves by [ X ]%, how do subnets react?"
       />
 
-      <div style={{ overflowX: "auto", marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}` }}>
+      <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh", marginTop: 18, borderRadius: 10, border: `1px solid ${C.border}` }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--mono)", fontSize: 13 }}>
           <thead>
             <tr>
@@ -135,7 +137,7 @@ export default function SubnetTable({ subnets, alphaRanges }) {
               <TH label="Alpha"       sortKey="beta0"     {...thProps} />
               <TH label="R²"          sortKey="r2"        {...thProps} />
               <TH label="Predict"     sortKey="predicted" {...thProps} />
-              <TH label="准确率"      sortKey="accuracy"  {...thProps} />
+              <TH label="Accuracy"   sortKey="accuracy"  {...thProps} />
             </tr>
           </thead>
           <tbody>
