@@ -203,27 +203,7 @@ export function aggregateToDaily(klines4h) {
   return [...byDay.values()].sort((a, b) => a.time - b.time);
 }
 
-// ── Alpha range calibration ───────────────────────────────────────────────────
-
-/**
- * Compute alpha (β₀) P5/P95 range across a set of subnets for a given period.
- * @param {number[]} alphas - array of β₀ values
- */
-export function computeAlphaRange(alphas) {
-  return percentileRange(alphas, 5, 95);
-}
-
-// ── MAPE / Accuracy ───────────────────────────────────────────────────────────
-
-/**
- * Compute prediction accuracy from old coefficients and actual returns.
- * Returns null if yActual ≈ 0 (prevents division by zero).
- */
-export function computeAccuracy(beta0Old, beta1Old, xActual, yActual) {
-  const yPred = beta0Old + beta1Old * xActual;
-  const smape = symmetricMAPE(yPred, yActual);
-  return Math.max(0, Math.min(1, 1 - smape));
-}
+// ── Holdout Accuracy ─────────────────────────────────────────────────────────
 
 /**
  * Compute hold-out accuracy by splitting (x, y) into an 80% train / 20% test

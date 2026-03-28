@@ -215,7 +215,7 @@ export async function runDailyCron(state, env, batch = 0) {
       name: subnet.name,
       tvl: Math.round(tvlUsd),
       regDays: days,
-      h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, windowDays: 30 },
+      h4: prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: 30 },
       d1: d1 ? { beta0: d1.beta0, beta1: d1.beta1, r2: d1.r2, accuracy: d1.accuracy ?? crossRunAcc_d1, mapeHistory: mapeHistory_d1, windowDays: d1Win } : (prev?.d1 ?? null),
       w1: isMonday
         ? (w1Result ? { beta0: w1Result.beta0, beta1: w1Result.beta1, r2: w1Result.r2, accuracy: w1Result.accuracy ?? crossRunAcc_w1, mapeHistory: mapeHistory_w1, windowDays: w1Win } : (prev?.w1 ?? null))
@@ -235,6 +235,7 @@ export async function runDailyCron(state, env, batch = 0) {
     }
   }
 
+  state.alphaRanges = state.alphaRanges ?? {};
   if (allAlphas.d1.length > 0) state.alphaRanges.d1 = percentileRange(allAlphas.d1, 5, 95);
   if (allAlphas.w1.length > 0) state.alphaRanges.w1 = percentileRange(allAlphas.w1, 5, 95);
 
