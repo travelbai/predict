@@ -9,7 +9,7 @@ export default function StaleBanner({ updatedAt }) {
   return (
     <div className="stale-banner">
       <span>⚠</span>
-      <span>节点拥堵，当前采用 <strong>{hours}</strong> 小时前快照参数</span>
+      <span>数据更新异常，当前展示 <strong>{hours}</strong> 小时前的快照数据</span>
     </div>
   );
 }

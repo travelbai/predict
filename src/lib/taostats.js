@@ -55,16 +55,20 @@ export async function fetchSubnetHistory(netuid, limit, env) {
     env,
   );
 
-  const candles = (data.data ?? [])
+  const raw = data.data ?? [];
+  const candles = raw
     .map(k => ({
       time: new Date(k.timestamp).getTime(),
       price: parseFloat(k.price),
-      // tao_volume is the TAO traded in this period; fall back to null if absent
       volume: k.tao_volume != null ? parseFloat(k.tao_volume) : (k.volume != null ? parseFloat(k.volume) : null),
     }))
     .filter(k => k.price > 0 && k.time > 0);
 
-  // Reverse to chronological order
+  const dropped = raw.length - candles.length;
+  if (dropped > 0) {
+    console.warn(`[taostats] SN${netuid}: dropped ${dropped}/${raw.length} invalid candles`);
+  }
+
   candles.reverse();
   return candles;
 }
@@ -98,7 +102,10 @@ async function get(path, params, env, attempt = 0) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Taostats HTTP ${res.status} ${path}: ${body.slice(0, 120)}`);
+      const retryable = res.status === 429 || res.status >= 500;
+      const err = new Error(`Taostats HTTP ${res.status} ${path}: ${body.slice(0, 120)}`);
+      if (!retryable) throw err; // 4xx (except 429) — fail fast, no retry
+      throw err;
     }
 
     return await res.json();

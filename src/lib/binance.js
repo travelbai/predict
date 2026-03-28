@@ -9,7 +9,8 @@ const BASE =
   (typeof process !== "undefined" && process.env?.BINANCE_BASE_URL) ||
   "https://api.binance.com";
 
-const RETRY_DELAYS = [60_000, 300_000, 900_000];
+// Keep retries short — CF Workers have strict wall-clock limits on cron triggers
+const RETRY_DELAYS = [2_000, 5_000, 10_000];
 
 /**
  * Fetch klines from Binance.

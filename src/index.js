@@ -1,19 +1,15 @@
 // Cloudflare Worker — Predict
 //
 // Routes:
-//   GET /api/dashboard  → reads dashboard_state from KV
-//   GET /api/run-daily  → manually trigger Daily Cron (debug only — remove when done)
-//   GET /api/run-4h     → manually trigger 4H Cron   (debug only — remove when done)
+//   GET /api/dashboard        → reads dashboard_state from KV
+//   GET /api/debug/*?key=...  → debug routes (requires DEBUG_KEY env var)
 //
-// Scheduled triggers (wrangler.toml):
-//   Cron 1: "0 0 * * *"     daily 00:00 UTC — BTC/TAO macro + subnet 24H & 1W regression
-//   Cron 2: "0 */4 * * *"   every 4 hours  — subnet 4H regression
+// Scheduled triggers (via deploy workflow):
+//   Daily:  "1 0 * * *", "21 0 * * *", "41 0 * * *"   — BTC/TAO macro + subnet d1 & w1
+//   4H:     "0 1/4 * * *", "30 1/4 * * *"             — subnet h4 (odd hours)
 
 import { handleScheduled } from "./cron/scheduler.js";
 import { MOCK_STATE } from "./mock/dashboardState.js";
-import { fetchBinanceKlines } from "./lib/binance.js";
-import { fetchSubnetHistory, historyDays } from "./lib/taostats.js";
-import { logReturns, aggregateToDaily, computeAccuracy } from "./lib/math.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -34,39 +30,37 @@ export default {
       return handleDashboard(env);
     }
 
-    // DEBUG routes — remove after testing
-    if (url.pathname === "/api/run-daily") {
-      ctx.waitUntil(handleScheduled("0 2 * * *", env));
-      const debug = await handleAccuracyProbe("d1", env);
-      return json({ status: "cron_started", accuracyProbe: debug });
-    }
-    if (url.pathname === "/api/run-daily-1") {
-      ctx.waitUntil(handleScheduled("20 2 * * *", env));
-      return json({ status: "cron_started", batch: 1 });
-    }
-    if (url.pathname === "/api/run-daily-2") {
-      ctx.waitUntil(handleScheduled("40 2 * * *", env));
-      return json({ status: "cron_started", batch: 2 });
-    }
-    if (url.pathname === "/api/run-4h") {
-      ctx.waitUntil(handleScheduled("0 */4 * * *", env));
-      return json({ status: "started", cron: "0 */4 * * *" });
-    }
-
-    // DEBUG: check heartbeat KV entry — remove after testing
-    if (url.pathname === "/api/check-heartbeat") {
-      try {
-        const raw = await env.KV.get("cron_heartbeat");
-        return json(raw ? JSON.parse(raw) : { error: "no heartbeat found" });
-      } catch (err) {
-        return json({ error: err.message });
+    // DEBUG routes — gated behind DEBUG_KEY environment variable
+    if (url.pathname.startsWith("/api/debug/")) {
+      const key = url.searchParams.get("key");
+      if (!env.DEBUG_KEY || key !== env.DEBUG_KEY) {
+        return json({ error: "unauthorized" }, 403);
       }
-    }
 
-    // DEBUG: sync accuracy probe for one subnet — remove after testing
-    if (url.pathname.startsWith("/api/debug-accuracy/")) {
-      const subnetId = parseInt(url.pathname.split("/").pop(), 10);
-      return handleDebugAccuracy(subnetId, env);
+      if (url.pathname === "/api/debug/run-daily") {
+        ctx.waitUntil(handleScheduled("1 0 * * *", env));
+        return json({ status: "cron_started", batch: 0 });
+      }
+      if (url.pathname === "/api/debug/run-daily-1") {
+        ctx.waitUntil(handleScheduled("21 0 * * *", env));
+        return json({ status: "cron_started", batch: 1 });
+      }
+      if (url.pathname === "/api/debug/run-daily-2") {
+        ctx.waitUntil(handleScheduled("41 0 * * *", env));
+        return json({ status: "cron_started", batch: 2 });
+      }
+      if (url.pathname === "/api/debug/run-4h") {
+        ctx.waitUntil(handleScheduled("0 1/4 * * *", env));
+        return json({ status: "started", cron: "0 1/4 * * *" });
+      }
+      if (url.pathname === "/api/debug/heartbeat") {
+        try {
+          const raw = await env.KV.get("cron_heartbeat");
+          return json(raw ? JSON.parse(raw) : { error: "no heartbeat found" });
+        } catch (err) {
+          return json({ error: err.message });
+        }
+      }
     }
 
     return new Response("Not Found", { status: 404 });
@@ -77,76 +71,6 @@ export default {
     ctx.waitUntil(handleScheduled(event.cron, env));
   },
 };
-
-// Synchronous accuracy probe — computes cross-run accuracy step by step for
-// the first subnet that has previous betas stored. Returns raw diagnostics so
-// the full calculation is visible in the browser.
-async function handleAccuracyProbe(period, env) {
-  try {
-    const raw = await env.KV.get("dashboard_state");
-    const state = raw ? JSON.parse(raw) : MOCK_STATE;
-
-    // Find first subnet that has previous betas for the requested period
-    const prev = (state.subnets ?? []).find(s => s[period]?.beta0 != null);
-    if (!prev) return { error: `no subnet with previous ${period} betas in KV` };
-
-    // Fetch TAO price data
-    const taoDaily = await fetchBinanceKlines("TAOUSDT", "1d", 185);
-    const taoDailyReturns = logReturns(taoDaily.map(d => d.price));
-
-    // Fetch subnet history
-    const win = prev[period].windowDays ?? 90;
-    const history = await fetchSubnetHistory(prev.id, win + 5, env);
-    const recent = history.slice(-win);
-    const subnetTaoReturns = logReturns(recent.map(k => k.price));
-    const taoSlice = taoDailyReturns.slice(-subnetTaoReturns.length);
-    const subnetUsdtReturns = subnetTaoReturns.map((r, i) =>
-      r !== null && taoSlice[i] !== null ? r + taoSlice[i] : null
-    );
-
-    // Search from end for last valid (finite, non-zero) data point
-    let xActual = null, yActual = null, foundIdx = -1;
-    for (let j = subnetUsdtReturns.length - 1; j >= 0; j--) {
-      const x = taoSlice[j];
-      const y = subnetUsdtReturns[j];
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        xActual = x; yActual = y; foundIdx = j;
-        break;
-      }
-    }
-
-    if (xActual === null) {
-      return {
-        subnetId: prev.id, symbol: prev.symbol, period,
-        error: "no valid data point found",
-        seriesLen: subnetUsdtReturns.length,
-        nullOrNaNCount: subnetUsdtReturns.filter(v => !Number.isFinite(v)).length,
-      };
-    }
-
-    const beta0Old = prev[period].beta0;
-    const beta1Old = prev[period].beta1;
-    const yPredicted = beta0Old + beta1Old * xActual;
-    const denom = (Math.abs(yPredicted) + Math.abs(yActual)) / 2;
-    const smape = denom < 1e-10 ? 0 : Math.abs(yPredicted - yActual) / denom;
-    const accuracy = Math.max(0, Math.min(1, 1 - smape));
-
-    return {
-      subnetId: prev.id, symbol: prev.symbol, period,
-      beta0Old, beta1Old,
-      xActual, yActual, yPredicted,
-      smape, accuracy,
-      foundIdx, seriesLen: subnetUsdtReturns.length,
-      note: "cross-run: prev betas vs latest actual data point (sMAPE)",
-    };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
-
-async function handleDebugAccuracy(subnetId, env) {
-  return json(await handleAccuracyProbe("h4", env));
-}
 
 async function handleDashboard(env) {
   try {

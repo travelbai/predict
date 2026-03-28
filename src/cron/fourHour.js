@@ -92,9 +92,10 @@ export async function runFourHourCron(state, env, batch = 0) {
     const mapeHistory_h4 = crossRunSmape != null
       ? [...(prev?.h4?.mapeHistory ?? []), crossRunSmape].slice(-10)
       : (prev?.h4?.mapeHistory ?? []);
+    const crossRunAcc = crossRunSmape != null ? Math.max(0, Math.min(1, 1 - crossRunSmape)) : null;
 
     const h4State = h4
-      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy, mapeHistory: mapeHistory_h4, windowDays: h4Win }
+      ? { beta0: h4.beta0, beta1: h4.beta1, r2: h4.r2, accuracy: h4.accuracy ?? crossRunAcc, mapeHistory: mapeHistory_h4, windowDays: h4Win }
       : (prev?.h4 ?? { beta0: 0, beta1: 0, r2: 0, accuracy: null, mapeHistory: [], windowDays: H4_DEFAULT });
 
     const tvlUsd = Math.round(subnet.tvlTao * taoUsdPrice);

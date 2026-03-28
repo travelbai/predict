@@ -162,7 +162,7 @@ export function linearRegression(x, y) {
  */
 export function linearRegressionPipeline(xArr, yArr) {
   const { x, y } = iqrFilter(xArr, yArr);
-  if (x.length < 5) return null;
+  if (x.length < 10) return null;
   return { ...linearRegression(x, y), sampleCount: x.length, accuracy: holdoutAccuracy(x, y) };
 }
 
@@ -255,7 +255,8 @@ export function holdoutAccuracy(x, y) {
     ssTot += (yTest[i] - yMean) ** 2;
   }
 
-  if (ssTot < 1e-10) return null;
+  // Log-returns are small numbers; use relative threshold instead of absolute
+  if (ssTot === 0) return null;
   return Math.max(0, 1 - ssRes / ssTot);
 }
 

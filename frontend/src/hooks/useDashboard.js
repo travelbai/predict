@@ -15,7 +15,7 @@ export function useDashboard() {
     async function load() {
       try {
         const res = await fetch("/api/dashboard");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`服务器返回 HTTP ${res.status}`);
         const data = await res.json();
         if (!cancelled) {
           setState(data);
@@ -23,7 +23,10 @@ export function useDashboard() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err.message);
+          const msg = err.name === "TypeError"
+            ? "网络连接失败，请检查网络后重试"
+            : err.message;
+          setError(msg);
           setLoading(false);
         }
       }

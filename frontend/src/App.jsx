@@ -40,7 +40,7 @@ export default function App() {
         {/* ── Error ─────────────────────────────────────────────── */}
         {error && !loading && (
           <div style={{ textAlign: "center", padding: "80px 0", color: C.t3, fontSize: 14 }}>
-            Unable to load data. Please try again later.
+            数据加载失败：{error}
           </div>
         )}
 

@@ -1,6 +1,6 @@
 // Cron dispatcher.
-// "0 0 * * *"   → Cron 1: BTC/TAO macro + subnet 24H & 1W regression
-// "0 */4 * * *" → Cron 2: subnet 4H regression
+// Daily 00:01/00:21/00:41 UTC  → BTC/TAO macro + subnet d1 & w1 (3 batches)
+// 4H   01:00/05:00/…/21:00    → subnet h4 regression (2 batches, odd hours)
 
 import { runDailyCron } from "./daily.js";
 import { runFourHourCron } from "./fourHour.js";
@@ -8,12 +8,13 @@ import { MOCK_STATE } from "../mock/dashboardState.js";
 
 // Maps each cron expression to its job type and batch index.
 // Batch 0 = top 44 by TVL, batch 1 = next 44, batch 2 = remainder.
+// Daily at 00:xx, 4H at odd hours (01,05,09,13,17,21) — zero overlap
 const CRON_MAP = {
-  "0 2 * * *":    { type: "daily", batch: 0 },
-  "20 2 * * *":   { type: "daily", batch: 1 },
-  "40 2 * * *":   { type: "daily", batch: 2 },
-  "0 */4 * * *":  { type: "4h",    batch: 0 },
-  "30 */4 * * *": { type: "4h",    batch: 1 },
+  "1 0 * * *":    { type: "daily", batch: 0 },
+  "21 0 * * *":   { type: "daily", batch: 1 },
+  "41 0 * * *":   { type: "daily", batch: 2 },
+  "0 1/4 * * *":  { type: "4h",    batch: 0 },
+  "30 1/4 * * *": { type: "4h",    batch: 1 },
 };
 
 export async function handleScheduled(cron, env) {
@@ -24,9 +25,13 @@ export async function handleScheduled(cron, env) {
   }
   console.log(`[scheduler] triggered: ${cron} → ${job.type} batch ${job.batch}`);
 
-  // Diagnostic heartbeat
+  // Diagnostic heartbeat — auto-expires after 24 hours
   try {
-    await env.KV.put("cron_heartbeat", JSON.stringify({ cron, type: job.type, batch: job.batch, startedAt: new Date().toISOString() }));
+    await env.KV.put(
+      "cron_heartbeat",
+      JSON.stringify({ cron, type: job.type, batch: job.batch, startedAt: new Date().toISOString() }),
+      { expirationTtl: 86400 },
+    );
   } catch (e) {
     console.error(`[scheduler] heartbeat KV write failed: ${e.message}`);
   }
