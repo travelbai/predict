@@ -39,9 +39,13 @@ export default {
       return json({ status: "cron_started", message: "Full cron triggered in background." });
     }
 
-    // Cold-start history initializer
+    // Cold-start history initializer (?reset=1 to restart from batch 0)
     if (url.pathname === "/api/init-history") {
       try {
+        if (url.searchParams.get("reset") === "1") {
+          await env.KV.delete("init_batch_index");
+          return json({ status: "reset", message: "init_batch_index cleared. Visit again to start batch 1." });
+        }
         const result = await runInitHistory(env);
         return json(result);
       } catch (err) {

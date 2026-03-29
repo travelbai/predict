@@ -3,7 +3,9 @@
  *
  * Each visit fetches ~44 subnet histories from Taostats /history/ endpoint,
  * writes them into KV price_history, then increments init_batch_index.
- * 3 visits covers all ~128 subnets. After that, returns "already initialized".
+ *
+ * History requests are processed in sequential chunks of 10 to avoid
+ * hitting Cloudflare's 50-subrequest-per-invocation limit.
  *
  * Subrequest budget per visit: 2 (pool list) + 44 (histories) = 46, under 50.
  */
@@ -11,14 +13,15 @@
 import {
   fetchAllPools,
   fetchSubnetHistory,
-  historyDays,
   INIT_BATCH_SIZE,
-  MIN_HISTORY_DAYS,
 } from "../lib/taostats.js";
 import { zeroVolumeRatio } from "../lib/math.js";
 
 /** Max zero-volume ratio before a subnet is excluded. */
 const MAX_ZERO_VOLUME = 0.15;
+
+/** How many subnets to fetch in parallel within a chunk. */
+const CHUNK_SIZE = 10;
 
 /**
  * Run one batch of history initialization.
@@ -59,46 +62,55 @@ export async function runInitHistory(env) {
   const historyRaw = await env.KV.get("price_history");
   const history = historyRaw ? JSON.parse(historyRaw) : { subnets: {} };
 
-  // Fetch histories in parallel (up to 44 subrequests)
-  const results = await Promise.allSettled(
-    batch.map(pool =>
-      fetchSubnetHistory(pool.netuid, 180, env)
-        .then(candles => ({ netuid: pool.netuid, candles, error: null }))
-        .catch(err => ({ netuid: pool.netuid, candles: [], error: err.message }))
-    )
-  );
-
   let initialized = 0;
   let skipped = 0;
   const errors = [];
 
-  for (const result of results) {
-    const { netuid, candles, error } = result.status === "fulfilled"
-      ? result.value
-      : { netuid: null, candles: [], error: result.reason?.message ?? "unknown" };
+  // Process in sequential chunks of CHUNK_SIZE to stay under 50 subrequests
+  for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
+    const chunk = batch.slice(i, i + CHUNK_SIZE);
 
-    if (error) {
-      errors.push({ netuid, error });
-      continue;
+    const results = await Promise.allSettled(
+      chunk.map(pool =>
+        fetchSubnetHistory(pool.netuid, 180, env)
+          .then(candles => ({ netuid: pool.netuid, candles, error: null }))
+          .catch(err => ({ netuid: pool.netuid, candles: [], error: err.message }))
+      )
+    );
+
+    for (const result of results) {
+      const { netuid, candles, error } = result.status === "fulfilled"
+        ? result.value
+        : { netuid: null, candles: [], error: result.reason?.message ?? "unknown" };
+
+      if (error) {
+        // If we hit subrequest limit, stop processing further chunks
+        if (error.includes("Too many subrequests")) {
+          errors.push({ netuid, error: "subrequest limit reached" });
+          continue;
+        }
+        errors.push({ netuid, error });
+        continue;
+      }
+
+      if (candles.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      // Zero-volume check: skip subnets with >15% zero-volume candles
+      const volumeCandles = candles.filter(c => c.volume != null);
+      if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
+        console.log(`[init] SN${netuid}: skipped — zero-volume ratio > ${MAX_ZERO_VOLUME * 100}%`);
+        skipped++;
+        continue;
+      }
+
+      // Store as simple {time, price} — no volume needed for regression
+      const id = String(netuid);
+      history.subnets[id] = candles.map(c => ({ time: c.time, price: c.price }));
+      initialized++;
     }
-
-    if (candles.length === 0) {
-      skipped++;
-      continue;
-    }
-
-    // Zero-volume check: skip subnets with >15% zero-volume candles
-    const volumeCandles = candles.filter(c => c.volume != null);
-    if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
-      console.log(`[init] SN${netuid}: skipped — zero-volume ratio > ${MAX_ZERO_VOLUME * 100}%`);
-      skipped++;
-      continue;
-    }
-
-    // Store as simple {time, price} — no volume needed for regression
-    const id = String(netuid);
-    history.subnets[id] = candles.map(c => ({ time: c.time, price: c.price }));
-    initialized++;
   }
 
   history.lastUpdated = new Date().toISOString();
@@ -121,7 +133,7 @@ export async function runInitHistory(env) {
     initialized,
     skipped,
     errors: errors.length,
-    errorDetails: errors.slice(0, 5), // cap detail output
+    errorDetails: errors.slice(0, 5),
     message: `Batch ${batchIndex + 1}/${totalBatches} done (${progress} subnets). ${initialized} initialized, ${skipped} skipped.`,
   };
 }

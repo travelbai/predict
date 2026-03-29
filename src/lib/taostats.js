@@ -103,6 +103,9 @@ async function get(path, params, env, attempt = 0) {
 
     return await res.json();
   } catch (err) {
+    // Subrequest limit — will never succeed in this invocation, don't retry
+    if (err.message?.includes("Too many subrequests")) throw err;
+
     if (attempt < RETRY_DELAYS.length) {
       console.warn(`[taostats] retry ${attempt + 1} in ${RETRY_DELAYS[attempt] / 1000}s — ${err.message}`);
       await sleep(RETRY_DELAYS[attempt]);
