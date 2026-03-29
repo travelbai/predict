@@ -2,35 +2,34 @@
  * Cold-start history initializer — /api/init-history
  *
  * Taostats rate limit: 5 requests/minute.
- * Strategy: sequential processing, 1 subnet at a time, 13s delay between each.
- * Runs in background via ctx.waitUntil() — returns immediately.
+ * Strategy:
+ *   - Cache pool list in KV (0 API calls after first visit)
+ *   - Fetch 5 subnet histories per visit (within burst limit)
+ *   - Browser auto-refreshes every 65s (rate window resets)
+ *   - ~26 visits × 65s ≈ 28 minutes, fully automatic
  *
- * Each visit processes ~20 subnets (~5 minutes in background).
- * Total: ceil(128/20) ≈ 7 visits, each ~5 min apart.
+ * Subrequest budget per visit: 0-2 (pool cache) + 5 (histories) ≤ 7, well under 50.
+ * Wall-clock: <5s per visit, well under free-plan 30s limit.
  */
 
 import {
-  fetchAllPools,
+  fetchAllPoolsCached,
   fetchSubnetHistory,
   INIT_BATCH_SIZE,
 } from "../lib/taostats.js";
 import { zeroVolumeRatio } from "../lib/math.js";
 
-/** Max zero-volume ratio before a subnet is excluded. */
 const MAX_ZERO_VOLUME = 0.15;
 
-/** Delay between Taostats history requests (13s ≈ under 5/min). */
-const REQUEST_DELAY_MS = 13_000;
-
 /**
- * Run one batch of history initialization (background).
- * Processes subnets one-by-one with rate-limit delays.
+ * Process one micro-batch of subnet history initialization.
+ * Returns a result object with progress info.
  */
 export async function runInitHistory(env) {
   const batchIndex = parseInt(await env.KV.get("init_batch_index") ?? "0", 10);
 
-  // Fetch pool list (1-2 subrequests) — counts toward rate limit
-  const pools = await fetchAllPools(env);
+  // Pool list from cache (0 API calls) or fresh (2 API calls, then cached 1h)
+  const pools = await fetchAllPoolsCached(env);
   const eligible = pools
     .filter(p => p.netuid != null && p.netuid !== 0)
     .sort((a, b) => Number(b.total_tao ?? 0) - Number(a.total_tao ?? 0));
@@ -39,13 +38,10 @@ export async function runInitHistory(env) {
   const totalBatches = Math.ceil(totalSubnets / INIT_BATCH_SIZE);
 
   if (batchIndex >= totalBatches) {
-    return {
-      status: "already_initialized",
-      message: `All ${totalSubnets} subnets initialized in ${totalBatches} batches.`,
-    };
+    return { done: true, totalSubnets, totalBatches };
   }
 
-  // Slice this batch
+  // Slice this micro-batch (5 subnets)
   const start = batchIndex * INIT_BATCH_SIZE;
   const end = Math.min(start + INIT_BATCH_SIZE, totalSubnets);
   const batch = eligible.slice(start, end);
@@ -58,54 +54,45 @@ export async function runInitHistory(env) {
   let skipped = 0;
   const errors = [];
 
-  // Wait 13s after pool list fetch to respect rate limit
-  await sleep(REQUEST_DELAY_MS);
+  // Fire all 5 in parallel (burst within rate limit)
+  const results = await Promise.allSettled(
+    batch.map(pool =>
+      fetchSubnetHistory(pool.netuid, 180, env)
+        .then(candles => ({ netuid: pool.netuid, candles, error: null }))
+        .catch(err => ({ netuid: pool.netuid, candles: [], error: err.message }))
+    )
+  );
 
-  // Process ONE subnet at a time with 13s delay between each
-  for (let i = 0; i < batch.length; i++) {
-    const pool = batch[i];
-    const netuid = pool.netuid;
+  for (const result of results) {
+    const { netuid, candles, error } = result.status === "fulfilled"
+      ? result.value
+      : { netuid: null, candles: [], error: result.reason?.message ?? "unknown" };
 
-    try {
-      const candles = await fetchSubnetHistory(netuid, 180, env);
+    if (error) {
+      errors.push({ netuid, error });
+      continue;
+    }
+    if (candles.length === 0) { skipped++; continue; }
 
-      if (candles.length === 0) {
-        skipped++;
-      } else {
-        // Zero-volume check
-        const volumeCandles = candles.filter(c => c.volume != null);
-        if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
-          console.log(`[init] SN${netuid}: skipped — high zero-volume ratio`);
-          skipped++;
-        } else {
-          history.subnets[String(netuid)] = candles.map(c => ({ time: c.time, price: c.price }));
-          initialized++;
-          console.log(`[init] SN${netuid}: ${candles.length} candles ✓`);
-        }
-      }
-    } catch (err) {
-      console.error(`[init] SN${netuid}: ${err.message}`);
-      errors.push({ netuid, error: err.message });
+    const volumeCandles = candles.filter(c => c.volume != null);
+    if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
+      skipped++;
+      continue;
     }
 
-    // Rate-limit delay (skip after last item)
-    if (i < batch.length - 1) {
-      await sleep(REQUEST_DELAY_MS);
-    }
+    history.subnets[String(netuid)] = candles.map(c => ({ time: c.time, price: c.price }));
+    initialized++;
   }
 
   history.lastUpdated = new Date().toISOString();
 
-  // Write back
   await Promise.all([
     env.KV.put("price_history", JSON.stringify(history)),
     env.KV.put("init_batch_index", String(batchIndex + 1)),
   ]);
 
-  console.log(`[init] batch ${batchIndex + 1}/${totalBatches} done — ${initialized} ok, ${skipped} skipped, ${errors.length} errors`);
-
-  // Write a progress marker so /api/init-history?status=1 can read it
-  await env.KV.put("init_progress", JSON.stringify({
+  return {
+    done: false,
     batch: batchIndex + 1,
     totalBatches,
     subnetsProcessed: end,
@@ -113,10 +100,5 @@ export async function runInitHistory(env) {
     initialized,
     skipped,
     errors: errors.length,
-    completedAt: new Date().toISOString(),
-  }));
-}
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  };
 }

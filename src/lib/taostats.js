@@ -7,9 +7,12 @@
 const BASE = "https://api.taostats.io";
 const RETRY_DELAYS = [3_000, 10_000, 30_000];
 
-/** Subnets per init-history batch. Rate-limited to 5 req/min by Taostats,
- *  so each batch of 20 takes ~5 minutes (sequential, 13s between requests). */
-export const INIT_BATCH_SIZE = 20;
+/** Subnets per init-history visit. With cached pool list, 5 history requests
+ *  fits within Taostats 5 req/min burst. Browser auto-refreshes every 65s. */
+export const INIT_BATCH_SIZE = 5;
+
+/** Pool list cache TTL in KV (1 hour). */
+const POOL_CACHE_TTL = 3600;
 
 /** Minimum days of price history before a subnet enters regression. */
 export const MIN_HISTORY_DAYS = 14;
@@ -25,6 +28,19 @@ export const MIN_HISTORY_DAYS = 14;
  */
 export async function fetchAllPools(env) {
   return fetchPages(env, "/api/dtao/pool/latest/v1", { limit: 200 }, 3);
+}
+
+/**
+ * Fetch pool list with 1-hour KV cache.
+ * Used by init-history to avoid burning rate-limit quota on pool list.
+ */
+export async function fetchAllPoolsCached(env) {
+  const cached = await env.KV.get("init_pool_cache");
+  if (cached) return JSON.parse(cached);
+
+  const pools = await fetchAllPools(env);
+  await env.KV.put("init_pool_cache", JSON.stringify(pools), { expirationTtl: POOL_CACHE_TTL });
+  return pools;
 }
 
 // ── Per-subnet history (init only) ───────────────────────────────────────────
