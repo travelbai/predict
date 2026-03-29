@@ -235,9 +235,11 @@ export function holdoutAccuracy(x, y) {
     ssTot += (yTest[i] - yMean) ** 2;
   }
 
-  // Log-returns are small numbers; use relative threshold instead of absolute
-  if (ssTot === 0) return null;
-  return Math.max(0, 1 - ssRes / ssTot);
+  // Guard: no variance in test set, or NaN crept in
+  if (!Number.isFinite(ssTot) || ssTot === 0) return null;
+  const r2 = 1 - ssRes / ssTot;
+  if (!Number.isFinite(r2)) return null;
+  return Math.max(0, r2);
 }
 
 // ── Adaptive window ───────────────────────────────────────────────────────────

@@ -1,78 +1,41 @@
-// Taostats API client
+// Taostats API client — bulk-first design
 //
 // Base URL : https://api.taostats.io
 // Auth     : Authorization: <key>   (no Bearer prefix)
 // Docs     : https://docs.taostats.io
 
 const BASE = "https://api.taostats.io";
-const RETRY_DELAYS = [3_000, 8_000, 20_000];
+const RETRY_DELAYS = [3_000, 10_000, 30_000];
 
-// Subnet admission: at least 14 days of price history
-const MIN_HISTORY_DAYS = 14;
+/** Subnets per init-history batch (keeps subrequests under 50). */
+export const INIT_BATCH_SIZE = 44;
 
-// ── Public API ────────────────────────────────────────────────────────────────
+/** Minimum days of price history before a subnet enters regression. */
+export const MIN_HISTORY_DAYS = 14;
+
+// ── Bulk endpoints (regular cron) ────────────────────────────────────────────
 
 /**
- * Fetch all active subnets and return those with sufficient history.
- * TVL is returned in TAO (total_tao / 1e9).
+ * Fetch ALL pools in one paginated sweep (like TAOFLOW).
+ * Returns flat array of pool objects with netuid, price, total_tao, etc.
  *
- * @param {object} env  Worker env bindings (needs env.TAOSTATS_API_KEY)
- * @returns {{ id, symbol, name, tvlTao, regDays }[]}
+ * @param {object} env  Worker env bindings
+ * @returns {Promise<object[]>}
  */
-// Subnets per batch — keeps subrequests under Cloudflare's 50-per-invocation cap.
-// Budget per batch: 3 Binance + 1 pool list + 1 identity + 44 histories = 49 total.
-export const BATCH_SIZE = 44;
-
-export async function fetchEligibleSubnets(env) {
-  // Fetch pool data and subnet identities in parallel
-  const [poolData, identityData] = await Promise.all([
-    get("/api/dtao/pool/v1", { limit: 256 }, env),
-    get("/api/subnet/identity/v1", { limit: 256 }, env).catch(err => {
-      console.warn(`[taostats] identity fetch failed, using pool names: ${err.message}`);
-      return { data: [] };
-    }),
-  ]);
-
-  // Build netuid → identity map for name/symbol lookup
-  const identityMap = new Map();
-  for (const s of (identityData.data ?? [])) {
-    const id = s.netuid ?? s.subnet_id;
-    if (id != null) {
-      identityMap.set(id, {
-        name: s.subnet_name || s.name || "",
-        symbol: s.token_symbol || s.symbol || "",
-      });
-    }
-  }
-
-  const subnets = poolData.data ?? [];
-
-  return subnets
-    .filter(s => s.netuid !== 0) // skip root subnet
-    .map(s => {
-      const identity = identityMap.get(s.netuid);
-      // Prefer identity API names, fall back to pool data, then generic
-      const name = identity?.name || s.subnet_name || s.name || `SN${s.netuid}`;
-      const symbol = identity?.symbol || s.token_symbol || s.symbol || name;
-      return {
-        id: s.netuid,
-        symbol: symbol.trim(),
-        name: name.trim(),
-        tvlTao: Number(s.total_tao) / 1e9,
-        regDays: null,
-      };
-    })
-    .sort((a, b) => b.tvlTao - a.tvlTao);
+export async function fetchAllPools(env) {
+  return fetchPages(env, "/api/dtao/pool/latest/v1", { limit: 200 }, 3);
 }
 
+// ── Per-subnet history (init only) ───────────────────────────────────────────
+
 /**
- * Fetch daily price history for a subnet (TAO-denominated).
- * Returns newest-first; we reverse to get chronological order.
+ * Fetch daily price history for a single subnet (TAO-denominated).
+ * Only used by /api/init-history for cold-start backfill.
  *
  * @param {number} netuid
- * @param {number} limit   max candles to fetch (e.g. 180 for daily cron)
+ * @param {number} limit   max candles (e.g. 180)
  * @param {object} env
- * @returns {{ time: number, price: number }[]}  chronological order
+ * @returns {Promise<{ time: number, price: number, volume: number|null }[]>}
  */
 export async function fetchSubnetHistory(netuid, limit, env) {
   const data = await get(
@@ -82,26 +45,18 @@ export async function fetchSubnetHistory(netuid, limit, env) {
   );
 
   const raw = data.data ?? [];
-  const candles = raw
+  return raw
     .map(k => ({
       time: new Date(k.timestamp).getTime(),
       price: parseFloat(k.price),
-      volume: k.tao_volume != null ? parseFloat(k.tao_volume) : (k.volume != null ? parseFloat(k.volume) : null),
+      volume: k.tao_volume != null ? parseFloat(k.tao_volume) : null,
     }))
-    .filter(k => k.price > 0 && k.time > 0);
-
-  const dropped = raw.length - candles.length;
-  if (dropped > 0) {
-    console.warn(`[taostats] SN${netuid}: dropped ${dropped}/${raw.length} invalid candles`);
-  }
-
-  candles.reverse();
-  return candles;
+    .filter(k => k.price > 0 && k.time > 0)
+    .reverse(); // chronological order
 }
 
 /**
- * How many days of history does this subnet have?
- * Used as the regDays gate (must be >= MIN_HISTORY_DAYS).
+ * How many calendar days does this price array span?
  */
 export function historyDays(candles) {
   if (candles.length < 2) return 0;
@@ -109,9 +64,22 @@ export function historyDays(candles) {
   return Math.floor(ms / 86_400_000);
 }
 
-export { MIN_HISTORY_DAYS };
+// ── Paginated fetch (TAOFLOW pattern) ────────────────────────────────────────
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+async function fetchPages(env, path, params, maxPages) {
+  const first = await get(path, { ...params, page: 1 }, env);
+  const totalPages = Math.min(first.pagination?.total_pages ?? 1, maxPages);
+  if (totalPages <= 1) return first.data ?? [];
+
+  const rest = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, i) =>
+      get(path, { ...params, page: i + 2 }, env).then(r => r.data ?? [])
+    )
+  );
+  return [...(first.data ?? []), ...rest.flat()];
+}
+
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
 async function get(path, params, env, attempt = 0) {
   const apiKey = env?.TAOSTATS_API_KEY ?? "";
@@ -120,9 +88,8 @@ async function get(path, params, env, attempt = 0) {
   try {
     const res = await fetch(url, {
       headers: {
-        // Taostats requires raw key — no Bearer prefix
-        "Authorization": apiKey,
-        "Accept": "application/json",
+        Authorization: apiKey,
+        Accept: "application/json",
       },
     });
 
@@ -130,7 +97,7 @@ async function get(path, params, env, attempt = 0) {
       const body = await res.text().catch(() => "");
       const retryable = res.status === 429 || res.status >= 500;
       const err = new Error(`Taostats HTTP ${res.status} ${path}: ${body.slice(0, 120)}`);
-      if (!retryable) throw err; // 4xx (except 429) — fail fast, no retry
+      if (!retryable) throw err;
       throw err;
     }
 
