@@ -39,18 +39,28 @@ export default {
       return json({ status: "cron_started", message: "Full cron triggered in background." });
     }
 
-    // Cold-start history initializer (?reset=1 to restart from batch 0)
+    // Cold-start history initializer
+    //   ?reset=1   → restart from batch 0
+    //   ?status=1  → check background progress
+    //   (default)  → start next batch in background
     if (url.pathname === "/api/init-history") {
-      try {
-        if (url.searchParams.get("reset") === "1") {
-          await env.KV.delete("init_batch_index");
-          return json({ status: "reset", message: "init_batch_index cleared. Visit again to start batch 1." });
-        }
-        const result = await runInitHistory(env);
-        return json(result);
-      } catch (err) {
-        return json({ status: "error", message: err.message }, 500);
+      if (url.searchParams.get("reset") === "1") {
+        await env.KV.delete("init_batch_index");
+        await env.KV.delete("init_progress");
+        return json({ status: "reset", message: "Init state cleared. Visit again to start batch 1." });
       }
+      if (url.searchParams.get("status") === "1") {
+        const progress = await env.KV.get("init_progress");
+        return json(progress ? JSON.parse(progress) : { status: "no_progress" });
+      }
+      // Fire-and-forget: run in background (~5 min per batch due to rate limit)
+      const batchIndex = parseInt(await env.KV.get("init_batch_index") ?? "0", 10);
+      ctx.waitUntil(runInitHistory(env));
+      return json({
+        status: "init_started",
+        batch: batchIndex + 1,
+        message: `Batch ${batchIndex + 1} started in background. ~5 min to complete (Taostats rate limit: 5 req/min). Check progress: /api/init-history?status=1`,
+      });
     }
 
     return new Response("Not Found", { status: 404 });

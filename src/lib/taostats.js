@@ -7,8 +7,9 @@
 const BASE = "https://api.taostats.io";
 const RETRY_DELAYS = [3_000, 10_000, 30_000];
 
-/** Subnets per init-history batch (keeps subrequests under 50). */
-export const INIT_BATCH_SIZE = 44;
+/** Subnets per init-history batch. Rate-limited to 5 req/min by Taostats,
+ *  so each batch of 20 takes ~5 minutes (sequential, 13s between requests). */
+export const INIT_BATCH_SIZE = 20;
 
 /** Minimum days of price history before a subnet enters regression. */
 export const MIN_HISTORY_DAYS = 14;

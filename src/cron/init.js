@@ -1,13 +1,12 @@
 /**
  * Cold-start history initializer — /api/init-history
  *
- * Each visit fetches ~44 subnet histories from Taostats /history/ endpoint,
- * writes them into KV price_history, then increments init_batch_index.
+ * Taostats rate limit: 5 requests/minute.
+ * Strategy: sequential processing, 1 subnet at a time, 13s delay between each.
+ * Runs in background via ctx.waitUntil() — returns immediately.
  *
- * History requests are processed in sequential chunks of 10 to avoid
- * hitting Cloudflare's 50-subrequest-per-invocation limit.
- *
- * Subrequest budget per visit: 2 (pool list) + 44 (histories) = 46, under 50.
+ * Each visit processes ~20 subnets (~5 minutes in background).
+ * Total: ceil(128/20) ≈ 7 visits, each ~5 min apart.
  */
 
 import {
@@ -20,26 +19,21 @@ import { zeroVolumeRatio } from "../lib/math.js";
 /** Max zero-volume ratio before a subnet is excluded. */
 const MAX_ZERO_VOLUME = 0.15;
 
-/** How many subnets to fetch in parallel within a chunk. */
-const CHUNK_SIZE = 10;
+/** Delay between Taostats history requests (13s ≈ under 5/min). */
+const REQUEST_DELAY_MS = 13_000;
 
 /**
- * Run one batch of history initialization.
- * Returns a JSON-serializable status object.
+ * Run one batch of history initialization (background).
+ * Processes subnets one-by-one with rate-limit delays.
  */
 export async function runInitHistory(env) {
-  // Read current batch index
   const batchIndex = parseInt(await env.KV.get("init_batch_index") ?? "0", 10);
 
-  // Fetch pool list to know all subnets (1-2 subrequests)
+  // Fetch pool list (1-2 subrequests) — counts toward rate limit
   const pools = await fetchAllPools(env);
   const eligible = pools
     .filter(p => p.netuid != null && p.netuid !== 0)
-    .sort((a, b) => {
-      const tvlA = Number(a.total_tao ?? 0);
-      const tvlB = Number(b.total_tao ?? 0);
-      return tvlB - tvlA; // highest TVL first
-    });
+    .sort((a, b) => Number(b.total_tao ?? 0) - Number(a.total_tao ?? 0));
 
   const totalSubnets = eligible.length;
   const totalBatches = Math.ceil(totalSubnets / INIT_BATCH_SIZE);
@@ -48,8 +42,6 @@ export async function runInitHistory(env) {
     return {
       status: "already_initialized",
       message: `All ${totalSubnets} subnets initialized in ${totalBatches} batches.`,
-      totalSubnets,
-      totalBatches,
     };
   }
 
@@ -66,50 +58,39 @@ export async function runInitHistory(env) {
   let skipped = 0;
   const errors = [];
 
-  // Process in sequential chunks of CHUNK_SIZE to stay under 50 subrequests
-  for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
-    const chunk = batch.slice(i, i + CHUNK_SIZE);
+  // Wait 13s after pool list fetch to respect rate limit
+  await sleep(REQUEST_DELAY_MS);
 
-    const results = await Promise.allSettled(
-      chunk.map(pool =>
-        fetchSubnetHistory(pool.netuid, 180, env)
-          .then(candles => ({ netuid: pool.netuid, candles, error: null }))
-          .catch(err => ({ netuid: pool.netuid, candles: [], error: err.message }))
-      )
-    );
+  // Process ONE subnet at a time with 13s delay between each
+  for (let i = 0; i < batch.length; i++) {
+    const pool = batch[i];
+    const netuid = pool.netuid;
 
-    for (const result of results) {
-      const { netuid, candles, error } = result.status === "fulfilled"
-        ? result.value
-        : { netuid: null, candles: [], error: result.reason?.message ?? "unknown" };
-
-      if (error) {
-        // If we hit subrequest limit, stop processing further chunks
-        if (error.includes("Too many subrequests")) {
-          errors.push({ netuid, error: "subrequest limit reached" });
-          continue;
-        }
-        errors.push({ netuid, error });
-        continue;
-      }
+    try {
+      const candles = await fetchSubnetHistory(netuid, 180, env);
 
       if (candles.length === 0) {
         skipped++;
-        continue;
+      } else {
+        // Zero-volume check
+        const volumeCandles = candles.filter(c => c.volume != null);
+        if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
+          console.log(`[init] SN${netuid}: skipped — high zero-volume ratio`);
+          skipped++;
+        } else {
+          history.subnets[String(netuid)] = candles.map(c => ({ time: c.time, price: c.price }));
+          initialized++;
+          console.log(`[init] SN${netuid}: ${candles.length} candles ✓`);
+        }
       }
+    } catch (err) {
+      console.error(`[init] SN${netuid}: ${err.message}`);
+      errors.push({ netuid, error: err.message });
+    }
 
-      // Zero-volume check: skip subnets with >15% zero-volume candles
-      const volumeCandles = candles.filter(c => c.volume != null);
-      if (volumeCandles.length > 0 && zeroVolumeRatio(volumeCandles) > MAX_ZERO_VOLUME) {
-        console.log(`[init] SN${netuid}: skipped — zero-volume ratio > ${MAX_ZERO_VOLUME * 100}%`);
-        skipped++;
-        continue;
-      }
-
-      // Store as simple {time, price} — no volume needed for regression
-      const id = String(netuid);
-      history.subnets[id] = candles.map(c => ({ time: c.time, price: c.price }));
-      initialized++;
+    // Rate-limit delay (skip after last item)
+    if (i < batch.length - 1) {
+      await sleep(REQUEST_DELAY_MS);
     }
   }
 
@@ -121,11 +102,10 @@ export async function runInitHistory(env) {
     env.KV.put("init_batch_index", String(batchIndex + 1)),
   ]);
 
-  const progress = `${end}/${totalSubnets}`;
-  console.log(`[init] batch ${batchIndex + 1}/${totalBatches} done — ${initialized} initialized, ${skipped} skipped, ${errors.length} errors`);
+  console.log(`[init] batch ${batchIndex + 1}/${totalBatches} done — ${initialized} ok, ${skipped} skipped, ${errors.length} errors`);
 
-  return {
-    status: "batch_done",
+  // Write a progress marker so /api/init-history?status=1 can read it
+  await env.KV.put("init_progress", JSON.stringify({
     batch: batchIndex + 1,
     totalBatches,
     subnetsProcessed: end,
@@ -133,7 +113,10 @@ export async function runInitHistory(env) {
     initialized,
     skipped,
     errors: errors.length,
-    errorDetails: errors.slice(0, 5),
-    message: `Batch ${batchIndex + 1}/${totalBatches} done (${progress} subnets). ${initialized} initialized, ${skipped} skipped.`,
-  };
+    completedAt: new Date().toISOString(),
+  }));
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
 }
