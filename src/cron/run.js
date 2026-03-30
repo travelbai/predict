@@ -270,7 +270,7 @@ export async function runCron(env) {
       if (raw) {
         const state = JSON.parse(raw);
         state.status = "stale";
-        state.staleReason = err.message;
+        state.staleReason = classifyError(err.message);
         await env.KV.put("dashboard_state", JSON.stringify(state));
       }
     } catch (_) { /* best effort */ }
@@ -395,4 +395,11 @@ function last(arr) {
 
 function lastNonNull(arr) {
   return last(arr);
+}
+
+function classifyError(msg) {
+  if (/binance/i.test(msg)) return "Binance API unavailable";
+  if (/taostats/i.test(msg)) return "Taostats API unavailable";
+  if (/subrequest/i.test(msg)) return "Too many subrequests";
+  return "Data calculation error";
 }
