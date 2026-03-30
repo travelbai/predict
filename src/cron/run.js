@@ -113,7 +113,7 @@ export async function runCron(env) {
       if (latestX != null && latestY != null) {
         const yPred = prevSnapshot.btcTao.beta0 + prevSnapshot.btcTao.beta1 * latestX;
         const smape = symmetricMAPE(yPred, latestY);
-        btcTaoAccuracy = Math.max(0, Math.min(1, 1 - smape));
+        btcTaoAccuracy = Math.max(0, Math.min(1, 1 - smape / 2));
       }
     }
     const btcTaoMapeHistory = btcTaoAccuracy != null
@@ -321,7 +321,7 @@ function computeTimeframe(subnetPrices, taoReturns, minPoints, prevBeta, prevMap
     if (latestX != null && latestY != null) {
       const yPred = prevBeta.beta0 + prevBeta.beta1 * latestX;
       const smape = symmetricMAPE(yPred, latestY);
-      accuracy = Math.max(0, Math.min(1, 1 - smape));
+      accuracy = Math.max(0, Math.min(1, 1 - smape / 2));
     }
   }
 
