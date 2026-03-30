@@ -150,8 +150,8 @@ export async function runCron(env) {
       if (days < MIN_HISTORY_DAYS) continue;
 
       const tvlUsd = Math.round((Number(pool.total_tao ?? 0) / 1e9) * taoUsdPrice);
-      const name = pool.subnet_name || pool.name || `SN${netuid}`;
-      const symbol = pool.token_symbol || pool.symbol || name;
+      const name = (pool.name && pool.name !== 'Unknown') ? pool.name : `SN${netuid}`;
+      const symbol = name;
 
       const prevSub = prevSubMap.get(netuid);
       const prevDashSub = prevDashSubMap.get(netuid);
