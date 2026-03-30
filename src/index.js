@@ -29,17 +29,6 @@ export default {
       return handleState(env);
     }
 
-    // Manual cron trigger (temporary — remove after verification)
-    if (url.pathname === "/api/run-daily") {
-      try {
-        const result = await runCron(env);
-        return json({ status: "ok", subnets: result?.subnets?.length ?? 0 });
-      } catch (err) {
-        console.error("[run-daily] error:", err);
-        return json({ status: "error", message: err.message }, 500);
-      }
-    }
-
     return new Response("Not Found", { status: 404 });
   },
 
