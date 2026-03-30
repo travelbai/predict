@@ -35,8 +35,12 @@ export default {
 
     // Manual cron trigger (debug)
     if (url.pathname === "/api/run-daily") {
-      ctx.waitUntil(runCron(env));
-      return json({ status: "cron_started", message: "Full cron triggered in background." });
+      try {
+        const result = await runCron(env);
+        return json({ status: "ok", subnets: result?.subnets?.length ?? 0 });
+      } catch (err) {
+        return json({ status: "error", message: err.message, stack: err.stack }, 500);
+      }
     }
 
     // Cold-start history initializer
