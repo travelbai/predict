@@ -1,13 +1,10 @@
 // Binance Public API client — no API key required.
 // Docs: https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data
 //
-// BASE URL priority:
-//   1. BINANCE_BASE_URL env var (set in seed script to use mirror when api.binance.com is blocked)
-//   2. https://api.binance.com  (default — always used in the deployed Worker)
+// Use data-api.binance.vision — the global mirror for market data.
+// api.binance.com returns HTTP 451 from certain Cloudflare edge locations.
 
-const BASE =
-  (typeof process !== "undefined" && process.env?.BINANCE_BASE_URL) ||
-  "https://api.binance.com";
+const BASE = "https://data-api.binance.vision";
 
 // Keep retries short — CF Workers have strict wall-clock limits on cron triggers
 const RETRY_DELAYS = [2_000, 5_000, 10_000];
