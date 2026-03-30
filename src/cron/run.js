@@ -51,11 +51,11 @@ export async function runCron(env) {
     ]);
 
     // c. Binance — 4 parallel requests
-    const [btcWeekly, taoWeekly, taoDaily, tao4h] = await Promise.all([
-      fetchBinanceKlines("BTCUSDT", "1w", 52),
-      fetchBinanceKlines("TAOUSDT", "1w", 52),
-      fetchBinanceKlines("TAOUSDT", "1d", 180),
-      fetchBinanceKlines("TAOUSDT", "4h", 180),
+    const [btcDaily, taoWeekly, taoDaily, tao4h] = await Promise.all([
+      fetchBinanceKlines("BTCUSDT", "1d", 365),   // daily for rolling 7d BTC→TAO
+      fetchBinanceKlines("TAOUSDT", "1w", 52),     // weekly for subnet W1
+      fetchBinanceKlines("TAOUSDT", "1d", 365),    // daily for BTC→TAO + subnet D1
+      fetchBinanceKlines("TAOUSDT", "4h", 180),    // 4h for subnet H4
     ]);
 
     // d. Taostats — bulk fetch all pools (~1-2 requests)
@@ -94,9 +94,12 @@ export async function runCron(env) {
     }
     history.lastUpdated = now.toISOString();
 
-    // ── h. BTC → TAO macro regression (Binance weekly, no KV needed) ─────
+    // ── h. BTC → TAO macro regression (rolling 7-day from daily data) ───
 
-    const { x: btcPrices, y: taoPrices } = alignByTimestamp(btcWeekly, taoWeekly);
+    // Sample every 7th daily close from the end → non-overlapping rolling weeks
+    const btcRollingWk = sampleEveryNth(btcDaily, 7);
+    const taoRollingWk = sampleEveryNth(taoDaily, 7);
+    const { x: btcPrices, y: taoPrices } = alignByTimestamp(btcRollingWk, taoRollingWk);
     const btcReturns = logReturns(btcPrices);
     const taoWkReturns = logReturns(taoPrices);
     const btcTaoReg = linearRegressionPipeline(btcReturns, taoWkReturns);
@@ -351,6 +354,19 @@ async function loadJSON(env, key) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Sample every Nth element from the end of a price array.
+ * Used for rolling 7-day windows: sampleEveryNth(daily, 7)
+ * gives non-overlapping "weekly" prices anchored to today.
+ */
+function sampleEveryNth(klines, n) {
+  const result = [];
+  for (let i = klines.length - 1; i >= 0; i -= n) {
+    result.unshift(klines[i]);
+  }
+  return result;
 }
 
 /** Round timestamp to nearest 4-hour boundary. */
