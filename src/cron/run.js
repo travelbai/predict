@@ -104,18 +104,9 @@ export async function runCron(env) {
     const taoWkReturns = logReturns(taoPrices);
     const btcTaoReg = linearRegressionPipeline(btcReturns, taoWkReturns);
 
-    // BTC→TAO accuracy from prev snapshot
-    let btcTaoAccuracy = null;
+    // BTC→TAO accuracy from prev snapshot (windowed median sMAPE)
     const prevBtcMape = prevDashboard?.btcTao?.mapeHistory ?? [];
-    if (prevSnapshot?.btcTao && btcReturns.length > 0 && taoWkReturns.length > 0) {
-      const latestX = btcReturns[btcReturns.length - 1];
-      const latestY = taoWkReturns[taoWkReturns.length - 1];
-      if (latestX != null && latestY != null) {
-        const yPred = prevSnapshot.btcTao.beta0 + prevSnapshot.btcTao.beta1 * latestX;
-        const smape = symmetricMAPE(yPred, latestY);
-        btcTaoAccuracy = Math.max(0, Math.min(1, 1 - smape / 2));
-      }
-    }
+    const btcTaoAccuracy = windowedAccuracy(prevSnapshot?.btcTao, btcReturns, taoWkReturns);
     const btcTaoMapeHistory = btcTaoAccuracy != null
       ? [...prevBtcMape, round4(1 - btcTaoAccuracy)].slice(-10)
       : prevBtcMape;
@@ -311,19 +302,9 @@ function computeTimeframe(subnetPrices, taoReturns, minPoints, prevBeta, prevMap
   const reg = linearRegressionPipeline(taoSlice, subUsdt);
   if (!reg) return null;
 
-  // Cross-run accuracy from snapshot_prev
-  let accuracy = null;
+  // Cross-run accuracy from snapshot_prev (windowed median sMAPE)
   const mapeHist = prevMapeHistory ?? [];
-
-  if (prevBeta && taoSlice.length > 0 && subUsdt.length > 0) {
-    const latestX = lastNonNull(taoSlice);
-    const latestY = lastNonNull(subUsdt);
-    if (latestX != null && latestY != null) {
-      const yPred = prevBeta.beta0 + prevBeta.beta1 * latestX;
-      const smape = symmetricMAPE(yPred, latestY);
-      accuracy = Math.max(0, Math.min(1, 1 - smape / 2));
-    }
-  }
+  const accuracy = windowedAccuracy(prevBeta, taoSlice, subUsdt);
 
   const mapeHistory = accuracy != null
     ? [...mapeHist, round4(1 - accuracy)].slice(-10)
@@ -382,6 +363,42 @@ function symmetricMAPE(pred, actual) {
   return Math.abs(pred - actual) / denom;
 }
 
+/**
+ * Windowed accuracy: evaluate prevBeta on the last K data points using
+ * median sMAPE.  A noise gate skips pairs where both |pred| and |actual|
+ * are < 1e-4 (≈0.01 % return) to avoid the sign-flip artefact that
+ * makes single-point sMAPE collapse to 2 on near-zero returns.
+ *
+ * @returns {number|null}  accuracy ∈ [0,1], or null when insufficient data
+ */
+function windowedAccuracy(prevBeta, xArr, yArr, k = 5) {
+  if (!prevBeta) return null;
+
+  const smapes = [];
+  for (let i = xArr.length - 1; i >= 0 && smapes.length < k; i--) {
+    const x = xArr[i], y = yArr[i];
+    if (x == null || y == null) continue;
+
+    const yPred = prevBeta.beta0 + prevBeta.beta1 * x;
+
+    // Noise gate: skip when both predicted and actual return are negligible
+    if (Math.abs(yPred) < 1e-4 && Math.abs(y) < 1e-4) continue;
+
+    smapes.push(symmetricMAPE(yPred, y));
+  }
+
+  if (smapes.length < 3) return null;
+
+  // Median sMAPE — robust to outliers from residual near-zero pairs
+  smapes.sort((a, b) => a - b);
+  const mid = Math.floor(smapes.length / 2);
+  const medSmape = smapes.length % 2 === 0
+    ? (smapes[mid - 1] + smapes[mid]) / 2
+    : smapes[mid];
+
+  return Math.max(0, Math.min(1, 1 - medSmape / 2));
+}
+
 function round4(n) {
   return Math.round(n * 10000) / 10000;
 }
@@ -393,9 +410,6 @@ function last(arr) {
   return null;
 }
 
-function lastNonNull(arr) {
-  return last(arr);
-}
 
 function classifyError(msg) {
   if (/binance/i.test(msg)) return "Binance API unavailable";
