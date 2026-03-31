@@ -12,3 +12,4 @@ frontend/dist/
 # Dev artifacts
 subnet-beta-panel.jsx
 regression-dev-prompt.md
+.claude/
